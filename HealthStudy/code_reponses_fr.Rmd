@@ -982,7 +982,7 @@ J'enregistre toutes les variables afin de pouvoir les utiliser également dans l
 
 ```{r}
 
-save.image(file = "data/environment.RData")
+save.image(file = "data/environment_fr.RData")
 ```
 
 
