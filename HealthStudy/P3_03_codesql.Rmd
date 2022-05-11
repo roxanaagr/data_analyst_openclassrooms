@@ -1,0 +1,223 @@
+---
+title: "Projet 3: Réalisez une étude de santé publique"
+author: "Roxana Agrigoroaie"
+date: "12 08 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Question 15
+**Une table appelée population, contenant la population de chaque pays pour 2013. **     
+**Elle devra contenir 4 colonnes : pays, code_pays, annee, population.**    
+**Question 15 : Proposez une clé primaire pertinente pour cette table. **
+
+
+
+CREATE TABLE `population` (   
+  `pays` varchar(100) DEFAULT NULL,   
+  `code_pays` int(11) NOT NULL,   
+  `annee` varchar(4) DEFAULT NULL,   
+  `population` varchar(50) DEFAULT NULL   
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;   
+
+
+La clé primaire pourrait être code_pays, car elle est unique pour chaque pays
+
+ALTER TABLE `population` ADD PRIMARY KEY(`code_pays`);
+
+### Question 16  
+
+**Une table appelée dispo_alim contenant pour chaque pays et pour chaque produit en 2013, les informations suivantes: **    
+**- la nature du produit (deux valeurs possibles : “animal” ou “végétal”)**    
+**- disponibilité alimentaire en tonnes**    
+**- disponibilité alimentaire en Kcal/personne/jour**     
+**- disponibilité alimentaire de protéines en g/personne/jour**     
+**- disponibilité alimentaire de matières grasses en g/personne/jour**    
+**Elle devra contenir ces colonnes : pays, code_pays, année, produit, code_produit, origin, dispo_alim_tonnes, dispo_alim_kcal_p_j, dispo_prot, dispo_mat_gr **
+
+**Question 16 : Proposez une clé primaire pertinente pour cette table.**
+
+
+Pour cette table la clé primaire est une clé composite composée de code_pays et code_produit
+
+
+CREATE TABLE `dispo_alim` (    
+  `pays` varchar(100) DEFAULT NULL,   
+  `code_pays` int(11) NOT NULL,   
+  `annee` varchar(4) DEFAULT NULL,    
+  `produit` varchar(50) DEFAULT NULL,   
+  `code_produit` varchar(5) DEFAULT NULL,   
+  `origin` varchar(10) DEFAULT NULL,   
+  `dispo_alim_tonnes` varchar(20) DEFAULT NULL,   
+  `dispo_alim_kcal_p_j` varchar(10) DEFAULT NULL,    
+  `dispo_prot` varchar(10) DEFAULT NULL,    
+  `dispo_mat_gr` varchar(10) DEFAULT NULL    
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;    
+
+ALTER TABLE `dispo_alim` ADD PRIMARY KEY(`code_pays`, `code_produit`);    
+
+
+### Question 17 
+
+**Une table appelée equilibre_prod contenant pour chaque pays et pour chaque produit en 2013, les quantités suivantes :**
+**- disponibilité intérieure**     
+**- aliments pour animaux**     
+**- semences**     
+**- pertes**     
+**- transformés**    
+**- nourriture**      
+**- autres utilisations**     
+**Elle devra contenir ces colonnes : pays, code_pays, année, produit, code_produit, dispo_int, alim_ani, semences, pertes, transfo, nourriture, autres_utilisations.**
+
+**Question 17 : Proposez une clé primaire pertinente pour cette table. **
+
+
+Là encore on a une clé composite comme clé primaire composée de code_pays et code_produit
+
+
+CREATE TABLE `equilibre_prod` (   
+  `pays` varchar(100) DEFAULT NULL,   
+  `code_pays` int(11) NOT NULL,    
+  `annee` varchar(4) DEFAULT NULL,    
+  `produit` varchar(50) DEFAULT NULL,     
+  `code_produit` varchar(5) DEFAULT NULL,    
+  `dispo_int` varchar(20) DEFAULT NULL,    
+  `alim_ani` varchar(10) DEFAULT NULL,    
+  `semences` varchar(10) DEFAULT NULL,    
+  `pertes` varchar(10) DEFAULT NULL,    
+  `transfo` varchar(10) DEFAULT NULL,    
+  `nourriture` varchar(10) DEFAULT NULL,    
+  `autres_utilisations` varchar(10) DEFAULT NULL    
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;    
+
+ALTER TABLE `equilibre_prod` ADD PRIMARY KEY(`code_pays`, `code_produit`);
+
+### Question 18
+
+**Une table appelée sous_nutrition, contenant le nombre de personnes en sous-alimentation pour chaque pays en 2013. **    
+**Elle devra contenir 4 colonnes : pays, code_pays, année, nb_personnes.**
+
+**Question 18 : Vous vous en doutez...  proposez encore une fois une clé primaire pertinente pour cette table !**
+
+
+Dans ce cas la clé primaire est le code_pays
+
+
+CREATE TABLE `sous_nutrition` (     
+  `pays` varchar(100) DEFAULT NULL,    
+  `code_pays` int(11) NOT NULL,    
+  `annee` varchar(4) DEFAULT NULL,    
+  `nb_personnes` varchar(20) DEFAULT NULL   
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;   
+
+ALTER TABLE `sous_nutrition` ADD PRIMARY KEY(`code_pays`);
+
+### Question 19
+
+
+**Question 19 : Écrivez les requêtes SQL permettant de connaître…**
+
+**1. Les 10 pays ayant le plus haut ratio disponibilité alimentaire/habitant en termes de protéines (en kg) par habitant, puis en termes de kcal par habitant. **
+
+**2. Pour l'année 2013, les 10 pays ayant le plus faible ratio disponibilité alimentaire/habitant en termes de protéines (en kg) par habitant. **
+
+**3. La quantité totale (en kg) de produits perdus par pays en 2013.**
+
+**4. Les 10 pays pour lesquels la proportion de personnes sous-alimentées est la plus forte. **
+
+**5. Les 10 produits pour lesquels le ratio Autres utilisations/Disponibilité intérieure est le plus élevé. **
+
+
+#### **Pour Question 1**: Les 10 pays ayant le plus haut ratio disponibilité alimentaire/habitant en 
+ termes de protéines (en kg) par habitant, puis en termes de kcal par habitant.
+ 
+ 
+SELECT     
+  pays,     
+  SUM(dispo_prot/1000) as new_disp     
+FROM dispo_alim      
+GROUP BY pays     
+ORDER BY new_disp  DESC   
+LIMIT 10     
+
+![](q19_1.jpg)
+
+
+Les 10 pays ayant le plus haut ratio disponibilité alimentaire/habitant en termes de protéines (en kg) par habitant, puis en termes de kcal par habitant.
+
+SELECT     
+  pays,     
+  SUM(dispo_alim_kcal_p_j)     
+FROM     
+  dispo_alim     
+GROUP BY pays      
+ORDER BY SUM(dispo_alim_kcal_p_j)  DESC     
+LIMIT 10    
+
+![](q19_1_2.jpg)
+
+
+#### **Pour question 2**: Pour l'année 2013, les 10 pays ayant le plus faible ratio disponibilité alimentaire/habitant en termes de protéines (en kg) par habitant.
+
+
+SELECT    
+  pays,     
+  SUM(dispo_prot/1000) as new_disp     
+FROM    
+  dispo_alim     
+GROUP BY pays     
+ORDER BY new_disp  ASC    
+LIMIT 10    
+
+
+![](q19_2.jpg)
+
+#### **Pour question 3**: La quantité totale (en kg) de produits perdus par pays en 2013.
+
+SELECT     
+  pays,     
+  SUM(pertes * 1e6)   
+FROM equilibre_prod     
+GROUP BY pays
+
+
+![](q19_3.jpg)
+
+#### **Pour question 4**: Les 10 pays pour lesquels la proportion de personnes sous-alimentées est la plus forte.
+
+Pour cela, je devrai joindre la table de sous-nutrition avec la table de population
+
+SELECT      
+  sn.pays,    
+  sn.nb_personnes,     
+  (sn.nb_personnes/p.population) AS proportion,      
+  p.population     
+FROM     
+  sous_nutrition sn     
+INNER JOIN population p ON p.code_pays = sn.code_pays     
+ORDER BY proportion DESC    
+LIMIT 10    
+
+![](q19_4.jpg)
+
+
+#### **Pour question 5**: Les 10 produits pour lesquels le ratio Autres utilisations/Disponibilité intérieure est le plus élevé.
+
+SELECT     
+  produit,    
+  (SUM(autres_utilisations)/SUM(dispo_int)) as ratio     
+FROM     
+  equilibre_prod    
+GROUP BY produit     
+ORDER BY ratio DESC     
+LIMIT 10    
+
+
+![](q19_5.jpg)
+
+### Question 20 : pour quelques uns des produits identifiés dans cette dernière requête SQL,     supposez quelles sont ces "autres utilisations" possibles (recherchez sur internet !)
+
+Pour répondre à cette question je choisis l'Huile de Palme. Il est principalement utilisé dans l'industrie alimentaire. Certaines des autres utilisations pour cela sont : shampoing, gel douche ; crème à raser; mascara; fonds de teint

@@ -1,0 +1,258 @@
+---
+title: "Projet 3: Réalisez une étude de santé publique"
+author: "Roxana Agrigoroaie"
+date: "12 08 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+load(file = "data/environment.RData")
+```
+
+### Préparation des données pour la base de données
+
+Transformez vos données en un format propice à l’utilisation souhaitée par les utilisateurs finaux, qui utiliserons votre base via le langage SQL. Une fois les données correctement formatées, vous les intégrerez dans une base de données. 
+
+Si j'utilise write.csv, je ne peux pas supprimer le header (pour MySQL), donc j'utiliserai write.table. Je vais souvegarder mes donnees avec et sans header.
+
+Votre base devra contenir ces différentes tables:
+
+### Question 15
+
+**Une table appelée population, contenant la population de chaque pays pour 2013. Elle devra contenir 4 colonnes : pays, code_pays, annee, population. **
+
+Mes données sont déjà dans ce format.  
+
+```{r}
+write.table(population_data, 
+          'data/mypopdata.csv', 
+          row.names = FALSE, 
+          col.names = FALSE,
+          fileEncoding = 'UTF-8',
+          sep=',')
+
+```
+
+
+### Question 16 
+
+**Une table appelée dispo_alim contenant pour chaque pays et pour chaque produit en 2013, les informations suivantes: **    
+**- la nature du produit (deux valeurs possibles : “animal” ou “végétal”)**    
+**- disponibilité alimentaire en tonnes**    
+**- disponibilité alimentaire en Kcal/personne/jour**     
+**- disponibilité alimentaire de protéines en g/personne/jour**     
+**- disponibilité alimentaire de matières grasses en g/personne/jour**    
+**Elle devra contenir ces colonnes : pays, code_pays, année, produit, code_produit, origin, dispo_alim_tonnes, dispo_alim_kcal_p_j, dispo_prot, dispo_mat_gr **
+
+
+
+Les codes dont j'ai besoin sont :      
+- 645 -> disponibilite alimentaire en kg/pers/an     
+- 664 -> disp alim en kcal/pers/jour    
+- 674 -> disp alim protein en g/pers/jour    
+- 684 -> disp alim mat grasse en g/pers/jour    
+
+Pour l'extraction cela fonctionne à la fois avec '' et comme int
+
+```{r echo = FALSE}
+extract_element <- function(datain, element_codes){
+  ### Cette fonction renvoie une dataframe qui a le 
+  ### code.element donné dans le vecteur element_codes
+  mydata <- datain %>%
+    filter(Code.Élément %in% element_codes)
+  return(mydata)
+}
+
+select_for_save <- function(datain, code, colname){
+  ### Cette fonction prépare mon dataframe dans le format 
+  ### dont j'ai besoin pour l'enregistrer
+  mydata <- datain %>%
+    filter(Code.Élément == code) %>%
+    mutate(colname = Valeur) %>%
+    select(c('Zone', 'Produit', colname))
+  
+  colnames(mydata) <- c('Zone', 'Produit', colname)
+  
+  return(mydata)
+}
+
+
+join_for_save <- function(datain, mydata){
+  datain <- datain %>%
+    left_join(mydata, by = c('Zone', 'Produit'))
+}
+
+```
+
+```{r}
+codes <- c('645', '664', '674', '684')
+animal  <- extract_element(animaldata, codes)
+vegetal <- extract_element(vegetauxdata,codes)
+
+## Je vérifie si j'ai les mêmes colonnes dans les 
+## deux dataframes afin de pouvoir les concaténer
+print(sum(colnames(animal) == colnames(vegetal)) == ncol(animal))
+
+## maintenant je peux concaténer les deux dataframes :
+total <- rbind(animal, vegetal)
+
+## Je dois aussi ajouter la population
+total$Population <- population_data$Totale[match(total$Code.zone, population_data$Code.zone)]
+
+
+# dispo_alim_tonnes, dispo_alim_kcal_p_j, dispo_prot, dispo_mat_gr
+
+good_columns <- c('Zone', 'Code.zone', 'Année', 'Produit', 'Code.Produit', 'Source')
+## le total est ma base; d'abord j'extrait les colonnes que je peux:
+disp_alim <- total %>%
+  # j'utilise all_of car j'ai reçu un message: 
+  ## Note: Using an external vector in selections is ambiguous.
+  select(all_of(good_columns)) %>%
+  # J'ai besoin de ne garder que les lignes uniques
+  distinct(Zone, Produit, .keep_all = TRUE) 
+
+# maintenant je dois ajouter les autres colonnes
+disp_alim_tonnes <- total %>%
+  filter(Code.Élément == 645) %>%
+  mutate(dispo_alim_tonnes = (Valeur * Population) / 1e3) %>%
+  select(c('Zone', 'Produit', 'dispo_alim_tonnes'))
+
+disp_alim  <- disp_alim %>%
+  left_join(disp_alim_tonnes, by = c("Zone", "Produit"))
+
+disp_alim_kcal <- select_for_save(total, 664, 'dispo_alim_kcal_p_j')
+disp_alim      <- join_for_save(disp_alim, disp_alim_kcal)
+
+disp_prot <- select_for_save(total, 674, 'dispo_prot')
+disp_alim <- join_for_save(disp_alim, disp_prot)
+
+disp_mat_gr <- select_for_save(total, 684, 'dispo_mat_gr')
+disp_alim   <- join_for_save(disp_alim, disp_mat_gr)
+
+write.table(disp_alim, 
+          'data/disp_alim.csv', 
+          row.names = FALSE,
+          col.names = FALSE,
+          fileEncoding = 'UTF-8',
+          sep=',')
+
+```
+
+### Question 17 
+
+**Une table appelée equilibre_prod contenant pour chaque pays et pour chaque produit en 2013, les quantités suivantes :**
+**- disponibilité intérieure**     
+**- aliments pour animaux**     
+**- semences**     
+**- pertes**     
+**- transformés**    
+**- nourriture**      
+**- autres utilisations**     
+**Elle devra contenir ces colonnes : pays, code_pays, année, produit, code_produit, dispo_int, alim_ani, semences, pertes, transfo, nourriture, autres_utilisations.**
+
+J'ai besoin des codes:       
+- disponibilite_interieure: 5301     
+- aliments pour animaux: 5521     
+- semences : 5527    
+- pertes: 5123    
+- transformes: il y a juste traitment: 5131    
+- nourriture: 5142     
+- autres utilisation: 5154    
+
+```{r}
+codes1   <- c(5301, 5521, 5527, 5123, 5131, 5142, 5154)
+animal1  <- extract_element(animaldata, codes1)
+vegetal1 <- extract_element(vegetauxdata,codes1)
+
+## Je vérifie si j'ai les mêmes colonnes dans les deux dataframes afin de pouvoir les concaténer
+print(sum(colnames(animal1) == colnames(vegetal1)) == ncol(animal1))
+
+## Maintenant je peux concaténer les deux dataframes :
+total1 <- rbind(animal1, vegetal1)
+## Je dois aussi ajouter la population
+total1$Population <- population_data$Totale[match(total1$Code.zone, population_data$Code.zone)]
+
+
+# Je commence avec total1
+good_columns_equilibre <- c('Zone', 'Code.zone', 'Année', 'Produit', 'Code.Produit')
+
+equilibre_prod <- total1 %>%
+  # j'utilise all_of car j'ai reçu un message: 
+  ## Note: Using an external vector in selections is ambiguous.
+  select(all_of(good_columns_equilibre)) %>%
+  # J'ai besoin de ne garder que les lignes uniques
+  distinct(Zone, Produit, .keep_all = TRUE) 
+
+# disponibilite_interieure: 5301
+# aliments pour animaux: 5521
+# semences : 5527
+# pertes: 5123
+# transformes: there is no such column; but there is one traitment: 5131
+# nourriture: 5142
+# autres utilisation: 5154
+
+interieure     <- select_for_save(total1, 5301, 'dispo_int')
+equilibre_prod <- join_for_save(equilibre_prod, interieure)
+
+animalfood     <- select_for_save(total1, 5521, 'alim_ani')
+equilibre_prod <- join_for_save(equilibre_prod, animalfood)
+
+semences       <- select_for_save(total1, 5527, 'semences')
+equilibre_prod <- join_for_save(equilibre_prod, semences)
+
+pertes         <- select_for_save(total1, 5123, 'pertes')
+equilibre_prod <- join_for_save(equilibre_prod, pertes)
+
+## il n'y a pas d'infos transfo dans notre base de données, 
+## je vais donc créer une colonne vide que je joindrai à la table
+transfo <- pertes
+colnames(transfo) <- c('Zone', 'Produit', 'transfo')
+transfo$transfo <- NA
+equilibre_prod  <- join_for_save(equilibre_prod, transfo)
+
+nourriture     <- select_for_save(total1, 5142, 'nourriture')
+equilibre_prod <- join_for_save(equilibre_prod, nourriture)
+
+autres_utilisations <- select_for_save(total1, 5154, 'autres_utilisations')
+equilibre_prod      <- join_for_save(equilibre_prod, autres_utilisations)
+
+write.table(equilibre_prod, 
+          'data/equilibre_prod.csv', 
+          row.names = FALSE, 
+          col.names = FALSE,
+          fileEncoding = 'UTF-8',
+          sep=',')
+
+```
+
+
+
+### Question 18
+
+**Une table appelée sous_nutrition, contenant le nombre de personnes en sous-alimentation pour chaque pays en 2013. **    
+**Elle devra contenir 4 colonnes : pays, code_pays, année, nb_personnes.**
+
+
+Pour cela, je dois sélectionner uniquement les lignes avec le code 20122014
+
+```{r}
+sous_alim <- sousalimdata %>%
+  filter(Code.année == '20122014') %>%
+  ## J'ai besoin de convertir en millions
+  mutate(Valeur = if_else(as.character(Valeur) == '<0.1', '0.1', as.character(Valeur))) %>%
+  mutate(nb_personnes = as.numeric(Valeur) * 1e6) %>%
+  ## et je sélectionne uniquement les colonnes pertinentes
+  select(c('Zone', 'Code.zone', 'Année', 'nb_personnes'))
+
+## et je sauvegarde les données
+write.table(sous_alim,
+          'data/sous_alim.csv',
+          row.names = FALSE,
+          col.names = FALSE,
+          fileEncoding = 'UTF-8',
+          sep=',')
+
+```
+

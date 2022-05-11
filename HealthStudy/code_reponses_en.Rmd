@@ -1,0 +1,988 @@
+---
+title: "Projet: Conduct a public health study"
+author: "Roxana Agrigoroaie"
+date: "12 08 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 100) 
+```
+
+## Introduction
+
+You are integrated into a new team of researchers from the Food and Agriculture Organization of the United Nations (FAO), one of the bodies that make up the UN and whose objective is "to help build a world free from hunger ".
+
+Your team is in charge of carrying out a large-scale study on the theme of undernutrition in the world.
+
+The problem of hunger is complex and can have multiple causes, which differ from country to country. The preliminary stage of this study will therefore be to establish a "state of the art" of the research already published, but also to carry out a statistical study intended to direct research towards particular countries, and to highlight various causes of hunger. Thus, a handful of data analysts (including you!) have been selected to lead this preliminary step. During the first meeting, you were appointed to set up the database that your team can query (in SQL) at will to carry out this statistical study.
+
+
+First, I'll import the libraries and external files I need, and I'll read the provided data.
+
+```{r}
+library(tidyverse)
+
+popdata      <- read_csv('data/fr_population.csv', 
+                         name_repair = "universal", 
+                         show_col_types = FALSE)
+animaldata   <- read_csv('data/fr_animaux.csv', 
+                         name_repair = "universal", 
+                         show_col_types = FALSE)
+cerealdata   <- read_csv('data/fr_cereales.csv', 
+                         name_repair = "universal",
+                         show_col_types = FALSE)
+sousalimdata <- read_csv('data/fr_sousalimentation.csv',
+                         name_repair = "universal",
+                         show_col_types = FALSE)
+vegetauxdata <- read_csv('data/fr_vegetaux.csv',
+                         name_repair = "universal",
+                         show_col_types = FALSE)
+```
+
+### Question 1
+
+**Create a dataframe containing population information for each country. Calculate the total number of humans on the planet. Critique your result. In the event of an anomaly, analyze and make the necessary corrections.**
+
+First I will create a dataframe with only the relevant information.
+
+```{r}
+population_data <- popdata %>%
+  # I select the relevant columns
+  select(c('Code.zone', 'Zone', 'Année', 'Unité', 'Valeur', 'Symbole')) %>%
+  # I extract the digital part of Unity
+  mutate(Unité = as.numeric(gsub("([0-9]+).*$", "\\1", Unité))) %>%
+  # and I calculate the total for each country
+  mutate(Totale = Unité * Valeur)
+
+pop_totale = sum(population_data$Totale)
+```
+
+**The total population for 2013 is `r pop_totale`. **
+
+The total population for 2013 should be 7.17 billion. The result shows that there are 1.3 billion more people. I need to see why this is happening. A first thing I can do is take a closer look at the data.
+
+
+```{r}
+summary(population_data)
+population_data %>% distinct(Symbole)
+```
+
+Looking at the result for the Symbol column, there is an entry of type "A" (aggregate)
+
+```{r}
+population_data %>%
+  filter(Symbole == 'A')
+```
+
+It corresponds to China. This data should be deleted, as there are other entries for China.
+
+```{r}
+population_data <- population_data %>%
+  filter(is.na(Symbole))
+pop_totale_new = sum(population_data$Totale)
+```
+
+**The total population for 2013 is `r pop_totale_new`.**
+
+The difference may be due to the fact that in the dataset there are 175 entries, and there are a total of 195 countries in the world.
+
+Also, in the dataset, the population values for each country are approximated to the nearest thousand.
+
+Now I can also delete the Symbol, Unit and Value columns.
+
+I keep this order because I will need it like this for Q15.
+
+```{r}
+population_data <- population_data %>%
+  select(c('Zone', 'Code.zone', 'Année', 'Totale'))
+```
+
+
+### Question 2
+
+Among the Food Balance Sheet documents you have downloaded, there is redundant information.
+Indeed, for a given country, some of this information can be calculated from others:
+
+* Production  
+* Imports   
+* Exports   
+* Stock variation    
+* Domestic Availability    
+* Seeds   
+* Losses   
+* Food, also called Food Availability   
+* Food for animals   
+* Treatment  
+* Other uses   
+      
+**Question 2 : Identify these redundancies, giving your answer in the form of a mathematical formula. It is a 3-term equation of the type \(a_1 + a2 + [...] = b_1 + b_2 + [...] = c_1 + c_2 + [...]\) ) involving each of the 11 quantities data above. Illustrate this equation with the example of wheat in France.**
+
+The equation is:    
+*domestic availability = production + imports + stock variation - exports*
+
+*domestic availability = seeds + losses + food + food for animals + treatment + other uses*
+
+```{r echo = FALSE}
+
+select_value_of_element <- function(datain, element_name){
+  ### This is a function that extracts and returns 
+  ### all values of a given element
+
+  myelement <- datain %>%
+    # Filter based on item name
+    filter(Élément == element_name) %>%
+    # select the Valeur column
+    select(Valeur)
+  
+  return(myelement$Valeur)
+}
+```
+
+I only select wheat from France.
+
+```{r}
+blefrance <- vegetauxdata %>%
+  filter(Zone == 'France' & Produit == 'Blé' & Unité == 'Milliers de tonnes') %>%
+  select(c(Produit, Unité, Valeur, Élément))
+
+production      <- select_value_of_element(blefrance, 'Production')
+import          <- select_value_of_element(blefrance, 'Importations - Quantité')
+export          <- select_value_of_element(blefrance, 'Exportations - Quantité')
+variation_stock <- select_value_of_element(blefrance, 'Variation de stock')
+dispo_int       <- select_value_of_element(blefrance, 'Disponibilité intérieure')
+semences        <- select_value_of_element(blefrance, 'Semences')
+pertes          <- select_value_of_element(blefrance, 'Pertes')
+nourriture      <- select_value_of_element(blefrance, 'Nourriture')
+alim_animaux    <- select_value_of_element(blefrance, 'Aliments pour animaux')
+traitement      <- select_value_of_element(blefrance, 'Traitement')
+autres_utils    <- select_value_of_element(blefrance, 'Autres utilisations (non alimentaire)')
+
+print(dispo_int == (production + import - export + variation_stock))
+print(dispo_int == (semences + pertes + nourriture + alim_animaux + traitement + autres_utils))
+```
+
+
+
+### Some calculations 
+
+As I removed China from the population, I also need to remove it from the other data sources.
+
+The area code for China is 351; so I have to select all data except the one with area code 351
+
+```{r echo = FALSE}
+remove_country <- function(datain, zone_code){
+  ### This function removes the country with the given code area
+  ### of the given dataframe
+  
+  mydata <- datain %>%
+    filter(Code.zone != zone_code)
+  return(mydata)
+}
+```
+
+```{r}
+animaldata   <- remove_country(animaldata, 351)
+vegetauxdata <- remove_country(vegetauxdata, 351)
+cerealdata   <- remove_country(cerealdata, 351)
+sousalimdata <- remove_country(sousalimdata, 351)
+
+## And I need to add a column to know the source of the data
+## Animals or Plants
+animaldata$Source   <- "Animaux"
+vegetauxdata$Source <- "Vegetaux"
+
+```
+
+
+### Question 3 
+
+**Calculate (for each country and each product) the food availability in kcal then in kg of protein.**
+
+You will do this from this information:
+* Population of each country
+* Food availability given for each product and for each country in kcal/person/day.
+* Food availability in protein given for each product and for each country in g/person/day.
+
+I keep only the relevant lines for this question: the Code.Elements are: 664 and 674
+
+```{r echo = FALSE}
+extract_element <- function(datain, element_codes){
+  ### This function returns a dataframe that has the
+  ### code.element given in element_codes vector
+  mydata <- datain %>%
+    filter(Code.Élément %in% element_codes)
+  return(mydata)
+}
+```
+
+```{r}
+dispo_animal   <- extract_element(animaldata, c('664', '674'))
+dispo_vegetaux <- extract_element(vegetauxdata, c('664', '674'))
+
+## I check if I have the same columns in the two dataframes in order to be able to concatenate them
+print(sum(colnames(dispo_animal) == colnames(dispo_vegetaux)) == ncol(dispo_animal))
+
+## Now I can concatenate them
+dispo_totale <- rbind(dispo_animal, dispo_vegetaux)
+
+## I can now delete unnecessary columns: but first I check if the symbol is the same for all elements:
+summary(dispo_totale$Symbole)
+
+## if all are in one category i can also delete it
+dispo_totale <- dispo_totale[, c('Code.zone', 'Zone', 
+                                 "Code.Élément", "Élément", 
+                                 "Code.Produit", "Produit", 
+                                 "Année", "Unité", 
+                                 "Valeur", "Source")]
+
+## I add the population column (for easier calculations later)
+dispo_totale$Population <- population_data$Totale[match(dispo_totale$Code.zone, 
+                                                        population_data$Code.zone)]
+
+## First I calculate the availability in kcal: I need to multiply the value by the population and 365
+dispo_totale$dispo_alimentaire <- dispo_totale$Valeur * dispo_totale$Population * 365
+
+## I extract kcal information
+dispo_en_kcal <- extract_element(dispo_totale, c('664'))
+
+##now I just have to convert from g to kg for protein
+dispo_en_protein <- dispo_totale %>%
+  filter(Code.Élément == "674") %>%
+  mutate(dispo_alimentaire = dispo_alimentaire / 1000)
+
+## I leave only the relevant columns
+relevant_cols <- c('Zone', "Élément", "Produit", "Année", "Population", "Valeur", "dispo_alimentaire", "Source")
+
+dispo_en_protein <- dispo_en_protein[, relevant_cols]
+dispo_en_kcal    <- dispo_en_kcal[, relevant_cols]
+
+mycolnames <- c('Zone', "Élément", "Produit", "Année", "Population", "Valeur-kcal", "dispo_alimentaire", "Source")
+colnames(dispo_en_kcal) <- mycolnames
+
+```
+
+### Question 4
+
+
+**From this latest information, and from the weight of food availability (for each country and each product), calculate for each product the "energy/weight" ratio, which you will give in kcal/kg.**
+
+You can check the consistency of your calculation by comparing this ratio to data available on the internet, for example by looking for the caloric value of an egg.
+
+**!!!Indication!!!** *Food availability in kcal/person/day is calculated by the FAO by multiplying the food quantity by the energy/weight ratio (in kcal/kg), then dividing it by the country's population and then by 365. Here you are asked just to find the energy/weight ratio that the FAO used in its calculation.*
+
+```{r}
+nourriture_totale <- rbind(extract_element(animaldata, c('5142')), 
+                           extract_element(vegetauxdata, c('5142')))
+
+## I check the Symbol column
+summary(nourriture_totale$Symbole)
+## There are only S's, so there is no data that needs to be deleted
+
+## I only keep relevant information
+## The unit for Food is in thousands of tons, and I need it in kg;
+## I first convert it to kg for calculations
+nourriture_totale$Nourriture_kg <- nourriture_totale$Valeur * 1e6 
+
+## I now create a column with food_tons for Q16
+nourriture_totale$nourriture_tonnes <- nourriture_totale$Valeur * 1e3
+## and then I only keep the relevant information
+nourriture_totale <- nourriture_totale[, c('Zone', 'Produit', 'Nourriture_kg')]
+
+dispo_en_kcal <- merge(dispo_en_kcal, nourriture_totale, by = c('Zone', 'Produit'))
+dispo_en_kcal$Ratio_energie_poids <- (dispo_en_kcal$Population * 365 * dispo_en_kcal$`Valeur-kcal` ) / dispo_en_kcal$Nourriture_kg
+
+head(dispo_en_kcal, 10)
+
+## I check the results for Eggs:
+oeufs <- dispo_en_kcal[dispo_en_kcal$Produit == 'Oeufs', ]
+
+## I check the data
+summary(oeufs)
+
+## I see that I have Inf;
+## so I have to remove it so I can get the summary stats
+oeufs <- oeufs %>% 
+  filter_at(vars(Ratio_energie_poids), all_vars(!is.infinite(.)))
+
+## and now I check the data again
+summary(oeufs$Ratio_energie_poids)
+
+
+```
+
+According to the Wikipedia page, the average caloric value for an egg is 1470 kcal/kg. I found an average result of 1345.3 kcal/kg. The difference can be attributed to the way the average was calculated for the Wikipedia page. In my case, I use the energy/weight ratio for each product and for each country. If I calculated an average for each product, the result would surely be different. Also, it is not available on the Wikipedia page which data was used to calculate the average nutritional values.
+
+
+*Following the same methodology, also calculate the protein percentage of each product (for each country). This percentage is obtained by calculating the "protein weight/total weight" ratio (pay attention to the units used). You can check the consistency of your calculation by comparing this ratio to data available on the internet, for example by looking for the protein content of oats.*
+
+```{r}
+## I add food in kg to dispo_en_protein
+dispo_en_protein <- merge(dispo_en_protein, nourriture_totale, by = c('Zone', 'Produit'))
+dispo_en_protein$pourcentage_proteines <- dispo_en_protein$dispo_alimentaire / dispo_en_protein$Nourriture_kg
+
+head(dispo_en_protein, 10)
+
+## I check the results for oats
+avoine <- dispo_en_protein[dispo_en_protein$Produit == 'Avoine', ]
+
+## I check the data
+summary(avoine$pourcentage_proteines)
+## There are both Inf and NA
+avoine <- avoine %>%
+  filter_at(vars(pourcentage_proteines), all_vars(!is.infinite(.) & !is.na(.)))
+
+## I recheck the data
+summary(avoine$pourcentage_proteines)
+## I have an average of 0.08
+```
+
+According to the Wikipedia page, the protein content of oats is 10.7 grams/100 grams or 0.1%. I found an average result of 0.08%. The difference can be attributed to the way the average was calculated for the Wikipedia page. In my case, I use the protein percentage for each product and for each country. If I calculated an average for each product, the result would surely be different. Also, it is not available on the wikipedia page what data was used to calculate the average protein content.
+
+### Question 5 
+
+**Name 5 foods among the 20 most caloric foods, using the energy/weight ratio. **
+
+*Surprisingly, it happens that this ratio is different depending on the country. It will therefore be necessary to achieve for each food an average over the different countries. You will therefore create a new table using an aggregation.*
+
+*Be careful to remove the values equal to 0 so as not to distort the calculation of the average.*
+
+**Name 5 foods among the 20 highest protein foods.**
+
+
+```{r}
+calorie_computation <- dispo_en_kcal %>%
+  ## first i remove all Inf, NA and 0 values
+  filter_at(vars(Ratio_energie_poids), all_vars(!is.infinite(.) & !is.na(.) & (. != 0))) %>%
+  ## then I group by product
+  group_by(Produit)  %>%
+  ## and calculates the average of Ratio_energy_weight for all countries,
+  ## and I also name the column Calorie
+  summarise_at(vars(Ratio_energie_poids), list(Calorie = mean)) %>%
+  ## and I sort them in descending order
+  arrange(desc(Calorie))
+
+## and then I extract the first 20 elements
+produits_calorique <- calorie_computation[1:20, ]
+
+
+knitr::kable(produits_calorique, "pipe", align = "lc", caption = "Les 20 produits plus calorique")
+```
+
+
+
+And then I need to calculate it also for proteins; and I look at the protein percentage
+
+```{r}
+protein_computation <- dispo_en_protein %>%
+  ## first i remove all Inf, NA and 0 values
+  filter_at(vars(pourcentage_proteines), all_vars(!is.infinite(.) & !is.na(.) & (. != 0))) %>%
+  ## then I group by product
+  group_by(Produit)  %>%
+  ## and calculate the average protein percentage for all countries
+  summarise_at(vars(pourcentage_proteines), list(Protein = mean)) %>%
+  ## and sort in descending order
+  arrange(desc(Protein))
+  
+## and then I extract the first 20 elements
+produits_protein <- protein_computation[1:20, ]
+
+knitr::kable(produits_protein, "pipe", align = "lc", caption = "Les 20 produits plus riches en proteines")
+```
+
+
+### Question 6 
+
+**Calculate, for plant products only, the global domestic availability expressed in kcal.**
+
+
+I extract the internal availability of vegetauxdata by taking again the element code 5301;
+
+I have to keep in mind that the energy/weight ratio is in kcal/kg; so i need to convert availability to kg
+
+```{r echo = FALSE}
+compute_disponibilite <- function(datasource, 
+                                  elementcode, 
+                                  conversion_unit = 1,
+                                  type = "kcal",
+                                  origin = "Vegetaux"){
+  ## datasource can be vegetauxdata or animaldata
+
+  mydata <- datasource %>%
+    ## I filter based on the Element code
+    filter(Code.Élément == elementcode) %>%
+    ## and then I convert it to kg
+    mutate(poids_kg = Valeur * conversion_unit)
+  
+  column_names <- c("Zone", "Produit", "Ratio", "Population")
+  
+  if (type == 'kcal') {
+    veg <- subset(dispo_en_kcal, Source == origin)
+    veg <- veg[, c('Zone', 'Produit', 'Ratio_energie_poids', 'Population')]
+    
+  } else if (type == "protein") {
+    veg <- subset(dispo_en_protein, Source == origin)
+    veg <- veg[, c('Zone', 'Produit', 'pourcentage_proteines', 'Population')]
+    
+  } else {
+    stop("Vous devez fournir le type de calcul : kcal ou prot?ine")
+  }
+  colnames(veg) <- column_names
+
+  joineddata <- mydata %>%
+    left_join(veg, by = c("Zone", "Produit")) %>%
+    mutate(result = Ratio * poids_kg) %>%
+    ## as I have the value for each country and each product,
+    ## some of them are NA or Inf; so i have to remove them
+    filter_at(vars(Ratio), all_vars((. != 'NaN') & (!is.infinite(.))))
+
+  ## and the total is :
+  disponibilite_mondiale <- sum(joineddata$result, na.rm = TRUE)
+  
+  return(disponibilite_mondiale)
+}
+
+```
+
+```{r}
+dispo_int_vegetaux_kcal <- compute_disponibilite(vegetauxdata, 
+                                                 elementcode = '5301', 
+                                                 conversion_unit = 1e6, 
+                                                 type = 'kcal', 
+                                                 origin = 'Vegetaux')
+```
+
+**The global domestic availability for crop products is `r dispo_int_vegetaux_kcal` kcal.**
+
+
+### Question 7 
+
+**How many humans could be fed if all of the world's domestic supply of plant products were used for food? **    
+
+*Give the results in terms of calories, then protein, and then express these 2 results as a percentage of the world's population.*
+
+For this question (and the other questions), I consider an average calorie intake of 2250 kcal/day. It's a simple model, but it's a good starting point for more complex models. Also, for protein, I consider the average protein requirement to be 0.051 kg of protein/day.
+
+A more complex model should take into consideration the age and sex of the population.
+
+```{r echo = FALSE}
+nourished_people <- function(data_in, type = "kcal"){
+  
+  ## first we define the number of calories a person needs
+  ## for women: 2000;
+  ## for men: 2500
+  ## # for this project we do the simple calculation by taking the average
+  
+  ## For protein, a person needs about 0.051 kg of protein
+  if (type == 'kcal') {
+    need_person <- 2250
+  }else if (type == "protein") {
+    need_person <- 0.051 
+  }else {
+    stop("You must provide the calculation type : kcal or protéine")
+  }
+  
+  ## I split our input data -
+  ## food availability with calorie/protein requirement
+  ## one year for one person
+  nourished <- data_in / ( need_person * 365)
+  ## I remove the decimal point
+  people <- round(nourished, digits = 0)
+
+  ## then, I compute the percentage 
+  nourished_percentage <- nourished / sum(population_data$Totale)
+  
+  # I keep only the first 3 decimals
+  percentage <- round(nourished_percentage, digits = 3)
+  
+  return (c(people, percentage))
+}
+```
+
+```{r}
+nourished_people_disp_int_kcal <- nourished_people(dispo_int_vegetaux_kcal, 
+                                                   type = "kcal")
+
+```
+**Humans nourished with all the world's internal availability of plant products in kcal `r nourished_people_disp_int_kcal[1]`. This corresponds to a percentage of `r nourished_people_disp_int_kcal[2]` of the world population. **
+
+```{r}
+## I calculate the internal availability also for proteins:
+
+dispo_int_vegetaux_protein <- compute_disponibilite(vegetauxdata, 
+                                                    elementcode = '5301', 
+                                                    conversion_unit = 1e6, 
+                                                    type = 'protein', 
+                                                    origin = 'Vegetaux')
+
+nourished_people_disp_int_protein <- nourished_people(dispo_int_vegetaux_protein, 
+                                                      type = "protein" )
+```
+
+**Humans nourished with all the world's internal availability of protein plant products `r nourished_people_disp_int_protein[1]`. This corresponds to a percentage of `r nourished_people_disp_int_protein[2]` of the world population. **
+
+
+### Question 8 
+
+**How many humans could be fed if all food availability of plant products, plant food for animals and waste plant products were used for food?**
+
+*Give the results in terms of calories, then protein, and then express these 2 results as a percentage of the world's population. *
+
+```{r}
+dispo_mondiale_vegetaux_kcal <- compute_disponibilite(vegetauxdata, 
+                                                      elementcode = '5142', 
+                                                      conversion_unit = 1e6, 
+                                                      type = 'kcal', 
+                                                      origin = 'Vegetaux')
+
+pertes_mondiale_vegetaux_kcal <- compute_disponibilite(vegetauxdata, 
+                                                       '5123',
+                                                       1e6,
+                                                       'kcal', 
+                                                       'Vegetaux')
+
+nourriture_animaux_mondiale_vegetaux_kcal <- compute_disponibilite(vegetauxdata, 
+                                                                   '5521', 
+                                                                   1e6, 
+                                                                   'kcal', 
+                                                                   'Vegetaux')
+
+required_data <- dispo_mondiale_vegetaux_kcal + pertes_mondiale_vegetaux_kcal + nourriture_animaux_mondiale_vegetaux_kcal
+
+nourished_people_q8_kcal <- nourished_people(required_data, type = "kcal")
+
+```
+
+**Humans fed with all food availability of plant products, plant food intended for animals and losses of plant products in kcal `r nourished_people_q8_kcal[1]`. This corresponds to a percentage of `r nourished_people_q8_kcal[2]` of the world population.**
+
+```{r}
+## Pour les protéines
+dispo_mondiale_vegetaux_protein <- compute_disponibilite(vegetauxdata, 
+                                                         '5142', 
+                                                         1e6, 
+                                                         'protein', 
+                                                         'Vegetaux')
+
+pertes_mondiale_vegetaux_protein <- compute_disponibilite(vegetauxdata, 
+                                                          '5123', 
+                                                          1e6, 
+                                                          'protein', 
+                                                          'Vegetaux')
+
+nourriture_animaux_mondiale_vegetaux_protein <- compute_disponibilite(vegetauxdata, 
+                                                                      '5521', 
+                                                                      1e6, 
+                                                                      'protein', 
+                                                                      'Vegetaux')
+
+required_data <- dispo_mondiale_vegetaux_protein + pertes_mondiale_vegetaux_protein + nourriture_animaux_mondiale_vegetaux_protein
+
+nourished_people_q8_protein <- nourished_people(required_data, type = "protein")
+
+```
+
+**Humans fed with all food availability of plant products, plant food for animals and plant product losses in protein `r nourished_people_q8_protein[1]`. This corresponds to a percentage of `r nourished_people_q8_protein[2]` of the world population. **
+
+### Question 9 
+
+**How many humans could be fed with the global food supply? **
+
+*Give the results in terms of calories, then protein, and then express these 2 results as a percentage of the world's population.*
+
+```{r}
+## here I need food availability of plant and animal data
+## of the plants I have already extracted
+
+dispo_mondiale_animaux_kcal <- compute_disponibilite(animaldata, 
+                                                     '5142', 
+                                                     1e6, 
+                                                     'kcal', 
+                                                     'Animaux')
+
+required_data_q9_kcal <- dispo_mondiale_vegetaux_kcal + dispo_mondiale_animaux_kcal
+
+nourished_people_q9_kcal <- nourished_people(required_data_q9_kcal, type = 'kcal')
+
+```
+
+**Humans fed with all global food availability in kcal `r nourished_people_q9_kcal[1]`. This corresponds to a percentage of `r nourished_people_q9_kcal[2]` of the world population. **
+
+```{r}
+# and for the proteins
+dispo_mondiale_animaux_protein <- compute_disponibilite(animaldata, 
+                                                        '5142', 
+                                                        1e6, 
+                                                        'protein', 
+                                                        'Animaux')
+
+required_data_q9_protein <- dispo_mondiale_vegetaux_protein + dispo_mondiale_animaux_protein
+
+nourished_people_q9_protein <- nourished_people(required_data_q9_protein, type = 'protein')
+
+```
+
+**Humans fed with all the global food supply of protein `r nourished_people_q9_protein[1]`. This corresponds to a percentage of `r nourished_people_q9_protein[2]` of the world population.**
+
+
+### Re-check my results with those of the FAO
+
+We know from the FAO website that the food availability is as follows:
+* vegetables: 2370 kcal/pers/day
+           : 49.1 g/pers/day (for proteins)
+* Animals: 514 kcal/pers/day
+          : 32.13 g/person/day (for proteins)
+        
+```{r}
+disp_alim_vegetaux_kcal <- dispo_mondiale_vegetaux_kcal / (sum(population_data$Totale) * 365) 
+disp_alim_animaux_kcal  <- dispo_mondiale_animaux_kcal / (sum(population_data$Totale) * 365)
+
+disp_alim_vegetaux_protein <- dispo_mondiale_vegetaux_protein / (sum(population_data$Totale) * 365) 
+disp_alim_animaux_protein  <- dispo_mondiale_animaux_protein / (sum(population_data$Totale) * 365)
+
+## Dataframe with the results
+source <- c('Vegetaux', 'Animaux')
+fao_kcal <- c(2370, 514)
+fao_protein <- c(49.1, 32.13)
+
+myresults_kcal    <- c(disp_alim_vegetaux_kcal, disp_alim_animaux_kcal)
+## multiply the result by 1e3 because my results are in kg
+## and those of the FAO are in g
+myresults_protein <- c(disp_alim_vegetaux_protein * 1e3, disp_alim_animaux_protein * 1e3)
+
+fao_df <- data.frame(source, fao_kcal, myresults_kcal, fao_protein, myresults_protein)
+knitr::kable(fao_df, "pipe", align = "lc", caption = "Comparaison entre mes resultats et celles du FAO" )
+
+
+```
+
+My results are almost identical to those of the FAO site, so I can conclude that my calculations are correct
+
+### Question 10
+
+**From the downloaded data on undernutrition, answer this question: What proportion of the world's population is considered to be undernourished? **
+
+In the FAO report on The State of Food Insecurity in the World the undernutrition values for each country are different from what I have in the database that was downloaded.
+
+```{r echo = FALSE}
+compute_subnutrition_percentage <- function(data_in, years_code, population_total){
+  mydata <- data_in %>%
+    filter(Code.année == years_code) %>%
+    ## also i have to remove china, which appears twice
+    filter(Code.zone != 351) %>%
+    filter_at(vars(Symbole), all_vars(. == 'F')) %>%
+    filter_at(vars(Valeur), all_vars((. != '<0.1'))) %>%
+    ## and I need to convert the value to millions
+    mutate(Value = as.numeric(as.character(Valeur)) * 1e6)
+  
+  value <- sum(mydata$Value)
+  proportion <- value / population_total
+  
+  return(c(value, proportion))
+}
+
+```
+
+
+```{r}
+
+proportion12_14 <- compute_subnutrition_percentage(sousalimdata, '20122014', pop_totale_new)
+proportion13_15 <- compute_subnutrition_percentage(sousalimdata, '20132015', pop_totale_new)
+proportion14_16 <- compute_subnutrition_percentage(sousalimdata, '20142016', pop_totale_new)
+proportion15_17 <- compute_subnutrition_percentage(sousalimdata, '20152017', pop_totale_new)
+proportion16_18 <- compute_subnutrition_percentage(sousalimdata, '20162018', pop_totale_new)
+
+
+subnutrition_df <- data.frame(c('2012-2014', '2013-2015', '2014-2016', '2015-2017', '2016-2018'),
+                              c(proportion12_14[1], proportion13_15[1], proportion14_16[1], proportion15_17[1], proportion16_18[1]),
+                              c(proportion12_14[2], proportion13_15[2], proportion14_16[2], proportion15_17[2], proportion16_18[2]))
+colnames(subnutrition_df) <- c('Periode', 'Valeur', 'Proportion')
+
+knitr::kable(subnutrition_df, "pipe", align = "cc", caption = "Proportion of world population considered to be undernourished")
+```
+
+### Question 11 
+
+**Establish the list of products (as well as their code) considered as cereals according to the FAO.**
+
+```{r}
+cereals <- cerealdata %>%
+  distinct(Produit, Code.Produit)
+
+cereals <- as.list(cereals)
+```
+
+**Locate cereal information in your data (for example by creating a Boolean type column named "is_cereal").**
+
+```{r}
+## cereals can only be in the vegetable data
+vegetauxdata <- vegetauxdata %>%
+  mutate(is_cereal = if_else(Produit %in% cereals$Produit, TRUE, FALSE) )
+```
+
+
+**Taking into account only cereals intended for food (human and animal), what proportion (in terms of weight) is intended for animal food? **
+
+```{r}
+alimentation_code <- c('5142', '5521')
+cereales_alimentation <- vegetauxdata %>%
+  ## I first filter using is_cereal column
+  filter(is_cereal == TRUE) %>%
+  filter(Code.Élément %in% alimentation_code) %>%
+  group_by(Code.Élément) %>%
+  summarise(totale = sum(Valeur))
+
+proportion_cereales_animale <- cereales_alimentation[cereales_alimentation$Code.Élément == '5521',]$totale/ sum(cereales_alimentation$totale)
+```
+
+**The proportion of cereals intended for animal feed is `r proportion_cereales_animale`.**
+
+### Question 12 
+
+**Select from the food balance sheet data the information relating to the countries in which the FAO identifies undernourished people. Identify the 15 most exported products by this group of countries. **
+
+```{r}
+summary(sousalimdata)
+## first i need to remove china
+## I need to select the countries that have the symbol F,
+## then select between animal data and plant data
+## only information related to these countries
+
+subnutrition_countries <-  sousalimdata %>%
+  filter(Zone != 'Chine') %>%
+  filter(Symbole == 'F') %>%
+  distinct(Zone)
+```
+
+#### INTERESTING
+I notice that there is a different number of countries in the underpowered dataset than in the other datasets; Out of curiosity, I check which countries are included in the undernutrition dataset but not the others;
+I am considering population data for this exercise
+
+```{r}
+countries_sousalimdata <- sousalimdata %>% 
+  distinct(Zone)
+countries_otherdata <- population_data %>%
+  distinct(Zone)
+countries_not_in_other_data <- countries_sousalimdata$Zone[!(countries_sousalimdata$Zone %in% countries_otherdata$Zone)]
+
+countries_not_in_other_data <- as.data.frame(countries_not_in_other_data)
+colnames(countries_not_in_other_data) <- c('Pays')
+
+knitr::kable(countries_not_in_other_data, "pipe", )
+```
+
+
+
+
+```{r}
+
+animaldata$is_cereal <- FALSE
+print(sum(colnames(animaldata) == colnames(vegetauxdata)) == ncol(animaldata))
+
+## now I can concatenate the two dataframes:
+all_data <- rbind(animaldata, vegetauxdata)
+
+## now i need to select only data for countries
+## of undernourished countries
+new_data <- all_data %>%
+  filter(Zone %in% subnutrition_countries$Zone) %>%
+  ## then i have to select export data only
+  filter(Code.Élément == 5911) %>%
+  ## all data is in thousands of tonnes
+  ## and I need to group by product
+  group_by(Produit) %>%
+  summarise_at(vars(Valeur), list(Total = sum)) %>%
+  ## I have to sort in descending order
+  arrange(desc(Total)) %>%
+  ## and now I have to select the first 15 rows
+  top_n(15, Total)
+
+## And I have to keep in mind that the data is in thousands of tons
+top_15_exported_data <- as.vector(as.character(new_data$Produit))
+
+knitr::kable(new_data, "pipe", caption = "The 15 most exported products by the countries in which the FAO identifies undernourished people (in thousands of tonnes).")
+```
+
+**From the food balance sheet data at the global level, select the 200 largest imports of these products (1 import = a quantity of a given product imported by a given country)**
+
+```{r}
+importations <- all_data %>%
+  ## I need to select only products from new_data
+  filter(Produit %in% top_15_exported_data)  %>%
+  ## I need to select import data only
+  filter(Code.Élément == 5611) %>%
+  ## I have to sort in descending order
+  arrange(desc(Valeur)) %>%
+  ## and I need to select only the first 200 entries
+  top_n(200, Valeur)
+```
+
+
+**Group these imports by product, in order to have a table containing 1 row for each of the 15 products.**
+
+*Then, calculate for each product the following 2 quantities: *
+*- the ratio between the quantity intended for "Other uses" and domestic availability. *
+*- the ratio between the quantity intended for animal food and the quantity intended for food (animal + human) *
+*Give the 3 products that have the highest value for each of the 2 ratios (you will therefore have 6 products to quote) *
+
+```{r echo = FALSE}
+
+get_data_by_product <- function(datain, products, element_code) {
+  mydata <- datain %>%
+    ## I select only the necessary products
+    filter(Produit %in% products) %>%
+    ## then I extract only relevant information for the given element
+    filter(Code.Élément == element_code) %>%
+    ## then I group by product
+    group_by(Produit) %>%
+    ## and finally I calculate the sum
+    summarise_at(vars(Valeur), list(myvalue = sum))
+  
+  return(mydata$myvalue)
+}
+
+```
+
+```{r}
+imports <- importations %>%
+  ## I group by product
+  group_by(Produit) %>%
+  ## and I calculate the sum of imports for each product
+  summarise_at(vars(Valeur), list(total_import = sum))
+
+imports$autre_utilisations <- get_data_by_product(all_data, 
+                                                  top_15_exported_data, 
+                                                  5154)
+imports$dispo_int          <- get_data_by_product(all_data, 
+                                                  top_15_exported_data, 
+                                                  5301)
+imports$alim_animaux       <- get_data_by_product(all_data, 
+                                                  top_15_exported_data, 
+                                                  5521)
+imports$nourriture_humaine <- get_data_by_product(all_data, 
+                                                  top_15_exported_data, 
+                                                  5142)
+imports$nourriture         <- imports$alim_animaux + imports$nourriture_humaine
+
+imports$ratio1 <- imports$autre_utilisations / imports$dispo_int
+imports$ratio2 <- imports$alim_animaux / imports$nourriture
+
+
+
+ratio1 <- imports %>%
+  arrange(desc(ratio1)) %>%
+  top_n(3, ratio1) %>%
+  select(c('Produit', 'ratio1'))
+
+ratio2 <- imports %>%
+  arrange(desc(ratio2)) %>%
+  top_n(3, ratio2) %>%
+  select(c('Produit', 'ratio2'))
+
+
+knitr::kable(
+  list(ratio1, ratio2),
+  caption = 'Products with the largest ratio1 (the ratio between the quantity destined for "Other uses" and domestic availability) and ratio2 (the ratio between the quantity destined for animal feed and the quantity destined for food (animal + human)',
+  booktabs = TRUE, valign = 't'
+)
+
+```
+
+
+### Question 13 
+
+**How many tons of grain could be freed up if the US cut its production of animal products by 10%?**
+
+I found the following feed conversion ratios [source](https://ourworldindata.org/grapher/feed-required-to-produce-one-kilogram-of-meat-or-dairy-product), based on [source]( https://www.sciencedirect.com/science/article/pii/S0959378016302370?casa_token=wQ_W1b5GM3sAAAAA:BbGB9h3Q0XEDvX1XWN8VT0Xc67DObsv2hSKXskFpzbGpewZGGZvC2c1zgxgUwfK45FSXoAmN-A#tblfn0005)
+
+```{r}
+feed_conversion_ratio <- c(25, 15, 15, 3.3, 15, 
+                           15, 0.7, 0.7, 15, 0, 
+                           0, 2.3, 0.7, 0, 0, 0, 
+                           0, 0, 0, 0, 0, 0)
+
+## We must keep in mind that these conversion rates relate to
+## dry foods not just cereals.
+## I couldn't find any source for cereals only
+## for all animal products
+
+usa_produits <- all_data %>%
+  ## I have to filter USA first
+  filter(Code.zone == 231)  %>%
+  ## so i only watch the production
+  filter(Code.Élément == 5511) %>%
+  ## all products are in thousands of tons
+  ## I only need to look at the animal source
+  filter(Source == 'Animaux') %>%
+  mutate(FCR = feed_conversion_ratio) %>%
+  mutate(cereal_needed = Valeur * FCR) %>%
+  ## Reduced production
+  mutate(reduced_production = 0.9 * Valeur) %>%
+  mutate(reduced_cereal_needed = reduced_production * FCR)
+
+## Total cereals needed for the whole production of animal products
+total_usa_feed <- sum(usa_produits$cereal_needed)
+
+## Total cereals needed to reduce the production of animal products
+reduced_usa_feed <- sum(usa_produits$reduced_cereal_needed)
+
+reponse_usa <- data.frame(c('Cereals total production', 'Cereals reduced production', 'Gain in cereals'), c(total_usa_feed, reduced_usa_feed, total_usa_feed - reduced_usa_feed))
+colnames(reponse_usa) <- c('Description', 'Total (in thousands of tonnes)')
+
+knitr::kable(reponse_usa, "pipe", align = "cc")
+```
+
+
+
+### Question 14
+**In Thailand, what proportion of cassava is exported?**
+
+**What is the proportion of undernourished people?**
+
+```{r}
+thai_manioc <- all_data %>%
+  ## I first select Thailand
+  filter(Code.zone == 216) %>% 
+  ## then I select the data for Cassava
+  filter(Produit == 'Manioc') 
+  
+exported <- thai_manioc %>%
+  filter(Code.Élément == 5911) %>%
+  select(Valeur)
+
+produced <- thai_manioc %>%
+  filter(Code.Élément == 5511) %>%
+  select(Valeur)
+
+proportion_exported <- exported$Valeur / produced$Valeur
+```
+
+The proportion of cassava exported is **`r proportion_exported`**.
+
+```{r}
+thai_population <- population_data %>%
+  filter(Code.zone == 216) %>%
+  select(Totale)
+
+thai_subnutrition <- sousalimdata %>%
+  filter(Code.zone == 216 & Code.année == 20122014) %>%
+  mutate(Value = as.numeric(as.character(Valeur)) * 1e6) %>%
+  mutate(Proportion = Value / thai_population$Totale)
+
+```
+
+The proportion of undernourished people is **`r thai_subnutrition$Proportion`**
+
+
+### Extra
+
+I save all the variables so that I can use them in the other markdown files as well.
+
+```{r}
+
+save.image(file = "data/environment.RData")
+```
+
+
+
+
