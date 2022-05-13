@@ -1,0 +1,677 @@
+---
+title: "Etude de marché - analyse des données"
+author: "Roxana Agrigoroaie"
+date: "10 11 2021"
+output: html_document
+---
+
+```{r setup, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(factoextra)
+library(FactoMineR)
+library(corrplot)
+library(NbClust)
+```
+
+## L'analyse des données
+
+Une fois que j'ai préparé mes données, je peux passer à la partie analyse. Le but de ce projet est de faire une étude de marché pour trouver 5 groupes de pays où le client pourrait vendre ses produits de poulet. J'ai sélectionné comme variables: la proportion de la différence de population entre 2015 et 2018; la proportion de la différence de population urbaine entre 2015 et 2018, la disponibilité alimentaire pour les protéines et les calories, la proportion de protéines animales sur le total des protéines disponibles et le PIB par habitant. Les données ont été obtenues auprès de la FAO. Au total, 172 pays sont caractérisés par les 6 variables.
+
+Dans un premier temps, je vais effectuer une ACP afin de réduire le nombre de variables. Et ensuite, j'appliquerai à la fois la recherche hiérarchique et les kmeans (et comparerai les résultats entre les deux algorithmes). Enfin, je vais effectuer l'analyse avec le nombre optimal de clusters. 
+
+Je commence par lire les données.
+
+```{r }
+df <- read_csv("data/fr_clean_data.csv", 
+               show_col_types = FALSE)
+
+df$pays <- gsub(pattern = "?", replacement = "é", df$pays, fixed = TRUE)
+
+
+# Je vais renommer la cologne GDP en PIB
+df <- df %>%
+  rename(PIB = GDP)
+
+glimpse(df)
+```
+
+Avant de pouvoir effectuer une PCA, je dois formater un peu les données. La colonne "pays" doit être utilisée comme nom des lignes pour une interprétation plus facile des résultats. De plus, je dois m'assurer qu'il n'y a pas de valeurs manquantes.
+
+```{r}
+df <- column_to_rownames(df, 
+                         var = "pays")
+glimpse(df)
+
+```
+
+```{r}
+summary(df)
+scaled_df <- scale(df)
+```
+Un aspect important à considérer pour l'ACP est la mise à l'échelle des données (toutes les variables doivent avoir une moyenne égale à 0 et la variance égale à 1). Comme les unités des variables sont différentes (par exemple, pour pop_diff, elle est comprise entre -4,46 et 13.360 tandis que pour le PIB de 392 à 117369), la mise à l'échelle n'est pas facultative.
+
+De plus, avant de commencer l'analyse, je veux vérifier si mes données ont une tendance au clustering. S'il a tendance à se regrouper, le paramètre fourni (H) doit être supérieur à 0,5. Je vais utiliser la fonction get_clust_tendency de la bibliothèque factoextra.
+
+```{r}
+get_clust_tendency(scaled_df, 
+                   n = nrow(df)-1, 
+                   graph = FALSE)
+```
+J'ai obtenu une valeur H égale à 0.79, ce qui signifie que mes données ont tendance à se regrouper.
+
+
+Ensuite, je veux regarder la matrice de corrélation entre les variables. 
+
+```{r}
+res <- cor(scaled_df)
+round(res, 2)
+```
+Et, je peux aussi voir la matrice de corrélation visuellement :
+
+```{r}
+corrplot(res, 
+         type = "upper", 
+         order = "hclust", 
+         tl.col = "black", 
+         tl.srt = 45)
+```
+
+## ACP
+
+Maintenant, je peux effectuer l'ACP. Je vais utiliser la fonction PCA du package FactoMineR. Je m'assure que les données sont mises à l'échelle de manière à ce qu'elles aient une moyenne égale à 0 et une variance égale à 1.
+
+```{r}
+df_pca <- PCA(df, scale.unit = TRUE)
+
+```
+
+La fonction renvoie deux tracés par défaut: le graphe ACP des individus (où chaque individu de notre dataframe est représenté sur le plan formé par les deux premières composantes principaux) et le graphe ACP des variables - ou le cercle de corrélation (où chaque variable est représentée sur le plan constitué par les deux premiers composants principaux).
+
+Ensuite, je vais extraire les valeurs propres et la variance que chaque dimension représente ainsi que la variance cumulée.
+
+```{r}
+df_eig <- get_eigenvalue(df_pca)
+df_eig
+```
+
+Dans ce cas, il y a un total de 6 composantes (comme le nombre de mes variables), et les 2 premières composantes représentent 84 % de la variabilité des données. Avant de passer à la phase de clustering, je dois déterminer le nombre de composants principaux à conserver. Il existe plusieurs méthodes pour ce faire.
+
+Je pourrais utiliser la méthode du coude en regardant le tracé d'éboulis (où les valeurs propres sont tracées par ordre décroissant). Le point auquel toutes les valeurs propres restantes sont toutes comparables en taille et relativement petites représente le coude et détermine le nombre de composants principaux à conserver.
+
+Voici le tracé d'éboulis dans mon cas :
+
+```{r}
+fviz_eig(df_pca, 
+         addlabels = TRUE, 
+         ylim = c(0, 70))
+```
+
+
+Le coude dans ce cas est à 2 dimensions. Par conséquent, compte tenu de cette méthode, je devrais utiliser deux composants principaux pour le clustering. Ensemble, ils représentent 84% de la variabilité des données; qui, bien qu'il n'y ait pas de consensus concernant le pourcentage idéal, c'est un pourcentage acceptable pour la variabilité.
+
+Une autre méthode que je peux utiliser est de regarder les valeurs propres elles-mêmes. Si une valeur propre est supérieure à 1, cela indique que cette composante principale représente plus de variance que celle expliquée par l'une des variables d'origine dans les données standardisées. Dans mon cas, la deuxième valeur propre est presque 1 (0,996), donc, en utilisant également cette méthode, je devrais sélectionner les deux premières composantes principaux. 
+
+
+```{r}
+# Extraire les résultats pour les variables
+df_var <- get_pca_var(df_pca)
+```
+
+Quelques autres résultats de l'ACP:
+
+### Cercle de corrélation:
+
+Ci-dessous se trouve le cercle de corrélation. Il montre la relation entre les variables sur le plan constitué par les deux premières composantes principaux. Voici comment je peux l'interpréter :
+
+- Les variables regroupées sont positivement corrélées. Dans mon cas j'ai deux groupes : d'un côté j'ai les variables caractérisant la population (pop_diff et pop_urban_diff) et de l'autre j'ai les variables caractérisant la disponibilité alimentaire et le PIB.
+
+- Les variables qui sont positionnées dans des quadrants opposés sont négativement corrélées.
+
+De plus, la qualité des variables sur la carte factorielle est déterminée par la distance entre la variable et l'origine. Ainsi, les variables éloignées de l'origine sont mieux représentées sur la carte factorielle que les variables les plus proches de l'origine.
+
+Ci-dessous le cercle de corrélation:
+
+```{r}
+fviz_pca_var(df_pca, 
+             col.var = "black", 
+             repel = TRUE)
+```
+
+
+### Qualité des variables - cos2
+
+Cette distance, qui représente la qualité des variables sur la carte factorielle, est aussi appelée cos2. Il peut être représenté de plusieurs manières.
+
+Les valeurs de cos2 pour chaque variable sur chaque dimension (pour les 5 premières dimensions):
+
+```{r}
+df_var$cos2
+```
+
+En tant que visualisation de la matrice de corrélation (pour les 5 premières dimensions).
+
+```{r}
+corrplot(df_var$cos2, is.corr=FALSE)
+```
+
+Une bonne représentation d'une variable sur la composante principale se traduit par une valeur cos2 élevée, ce qui signifie à son tour que la variable est positionnée près de la circonférence du cercle de corrélation.
+
+
+Le graphique suivant affiche la visualisation des valeurs cos2 (qualité de représentation) sur les deux premières dimensions (c'est-à-dire les deux premières composantes principaux). Je ne regarde que les deux premiers, car ce sont les seuls que je garderai pour la phase de clustering. 
+
+```{r}
+fviz_cos2(df_pca, 
+          choice = "var", 
+          axes = 1:2)
+```
+
+Dans mon cas, toutes les variables ont des valeurs cos2 élevées pour les deux premières dimensions (toutes ont des valeurs supérieures à 75%).
+
+
+Je peux visualiser les mêmes résultats sur le cercle de corrélation, où je colore chaque variable en fonction de sa valeur cos2.
+
+```{r}
+# Couleur par valeurs cos2 : qualité sur la carte factorielle
+fviz_pca_var(df_pca, 
+             axes = c(1, 2),
+             col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Éviter les chevauchements de texte
+             )
+```
+
+La variable avec la valeur cos2 la plus faible est animal_proteins_prop, qui a une valeur cos2 de 75% sur les deux premières dimensions.
+
+
+### Contributions des variables aux PC
+
+Chaque variable a une contribution spécifique à la variabilité d'une composante principale donnée. Cette contribution est exprimée en pourcentage. Les variables qui sont corrélées avec les premières composantes principales sont les plus importantes pour expliquer la variabilité de l'ensemble de données.
+
+La contribution des variables peut être extraite comme suit:
+
+```{r}
+df_var$contrib
+```
+
+Les mêmes résultats peuvent être visualisés à l'aide de la fonction corrplot.
+
+```{r}
+corrplot(df_var$contrib, is.corr=FALSE)   
+```
+
+Je peux aussi regarder la contribution de chaque variable à chaque composante principale. Je n'examinerai que les deux premiers éléments principaux. La ligne pointillée de référence correspond à la valeur attendue si les contributions étaient uniformes. Pour une dimension donnée, toute variable ayant une contribution au-dessus de la ligne de référence pourrait être considérée comme importante pour contribuer à la dimension.
+
+```{r}
+# Contributions des variables à PC1
+fviz_contrib(df_pca, 
+             choice = "var", 
+             axes = 1)
+# Contributions des variables à PC2
+fviz_contrib(df_pca, 
+             choice = "var", 
+             axes = 2)
+
+```
+
+Compte tenu de ce qui précède et des deux graphiques, je peux conclure que:
+
+Les variables ayant une contribution importante à la première dimension sont: la disponibilité alimentaire (protéines, calories), le animal_proteins_prop, et la différence de population urbaine.
+
+Les variables ayant une contribution importante à la deuxième dimension sont: la différence de population, le PIB et la différence de population urbaine.
+
+Par conséquent, toutes mes six variables ont des contributions importantes aux deux premières dimensions.
+
+Je peux également visualiser la contribution sur le cercle de corrélation.
+
+```{r}
+fviz_pca_var(df_pca, 
+             col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE
+             )
+```
+
+Ensuite, je regarderai les résultats de la fonction dimdesc() de FactoMineR, qui décrit chaque dimension (elle identifie les variables les plus significativement associées à une composante principale donnée).
+
+```{r}
+res.desc <- dimdesc(df_pca, axes = c(1,2), proba = 0.05)
+# Description de la dimension 1
+res.desc$Dim.1
+# Description de la dimension 2
+res.desc$Dim.2
+
+```
+
+Toutes les variables ont des valeurs de corrélation élevées pour la première dimension (pop_diff et pop_urban_diff sont négativement corrélées), tandis que pour la deuxième dimension, la variable la plus significativement associée est la différence de population, suivie du PIB.
+
+### Biplot
+
+Ensuite, je vais regarder le biplot.
+
+Qu'est-ce qu'un biplot? Il s'agit d'une représentation graphique des individus et des variables sur la carte factorielle. Il peut s'interpréter comme suit :
+
+- Un individu qui se situe du même côté (dans le même quadrant) d'une variable donnée a une valeur élevée pour cette variable
+
+- Un individu qui se situe du côté opposé (dans le quadrant opposé) d'une variable donnée a une valeur faible pour cette variable
+
+```{r warning=FALSE}
+fviz_pca_biplot(df_pca,
+                col.var = "red",
+                col.ind = "#696969",  # Individuals color
+                repel = TRUE
+                )
+```
+
+Du biplot, je peux voir que les pays avec les pop_diff et pop_urban_diff les plus élevés sont l'Ouganda, Oman, Niger; tandis que les pays avec le PIB le plus élevé sont le Luxembourg et le Macao.
+
+## Clustering 
+
+Pour le clustering, j'utiliserai les deux premiers composants. Ils représentent près de 84% de la variabilité des données.
+
+```{r}
+df_pca <- PCA(df, ncp = 2, graph = FALSE)
+df_var <- get_pca_var(df_pca)
+df_ind <- get_pca_ind(df_pca)
+```
+
+Ensuite, je déterminerai quel est le nombre optimal de clusters pour cette dataframe. Je comparerai les résultats en utilisant le nombre optimal de clusters et le nombre donné de clusters (c'est-à-dire 5).
+
+```{r}
+number_clusters <- NbClust(df_ind$coord,
+                     distance = "euclidean", 
+                     min.nc = 2,
+                     max.nc = 10, 
+                     method = "complete")
+
+```
+
+Le nombre optimal de clusters est égal à 3.
+
+
+### Nombre de clusters: 5
+
+Je vais commencer l'analyse avec le nombre de clusters donné : 5. Je vais effectuer une recherche hiérarchique et des kmeans. Je veux voir les différences entre les deux algorithmes.
+
+```{r}
+# Effectuer la recherche hiérarchique sur les principaux composants
+df_hsearch <- HCPC(df_pca, nb.clust = 5, graph = FALSE) 
+
+# Effectuez des kmeans, avec 5 clusters.
+set.seed(123)
+df_clust <- kmeans(df_ind$coord, centers = 5, nstart = 50)
+
+```
+
+
+Visualisation du dendrogramme:
+
+```{r warning=FALSE}
+fviz_dend(df_hsearch, 
+          cex = 0.7,                     # Label size
+          palette = "jco",               # Color palette see ?ggpubr::ggpar
+          rect = TRUE, rect_fill = TRUE, # Add rectangle around groups
+          rect_border = "jco",           # Rectangle color
+          labels_track_height = 0.8      # Augment the room for labels
+          )
+
+ggsave('P5_03_dendrogram.png', width = 25, height = 25, units = "cm")
+```
+
+
+Je peux également visualiser les clusters sur la carte factorielle. Je vais regarder les clusters générés par les deux algorithmes.
+
+```{r warning=FALSE}
+fviz_cluster(df_hsearch,
+             repel = TRUE,            # Éviter le chevauchement des étiquettes
+             show.clust.cent = TRUE, # Afficher les centres de cluster
+             palette = "jco",         # Palette de couleurs voir ?ggpubr::ggpar
+             ggtheme = theme_minimal(),
+             main = "Carte factorielle - Recherche hiérarchique")
+
+fviz_cluster(df_clust,
+             df_ind$coord,
+             repel = TRUE,            # Éviter le chevauchement des étiquettes
+             show.clust.cent = TRUE, # Afficher les centres de cluster
+             palette = "jco",         # Palette de couleurs voir ?ggpubr::ggpar
+             ggtheme = theme_minimal(),
+             main = "Carte factorielle - Kmeans")
+```
+
+Les deux représentations graphiques des clusters sont très similaires. Ensuite, je veux voir quels individus sont placés dans différents groupes entre les deux algorithmes. Mais avant cela, je veux voir quelles sont les différences dans les centres des clusters. Cela me dira quelle est la correspondance dans le numéro de cluster entre les deux algorithmes.
+
+```{r}
+# Centres de cluster Recherche hiérarchique:
+centroids_hsearch <- df_hsearch$desc.axes$call$X %>%
+  group_by(clust) %>%
+  summarise(dim1 = mean(Dim.1),
+            dim2 = mean(Dim.2))
+
+
+centroids_kmeans <- as_tibble(df_clust$centers)
+
+centroids_hsearch <- centroids_hsearch %>%
+  mutate(dim1_km = centroids_kmeans$Dim.1,
+         dim2_km = centroids_kmeans$Dim.2)
+centroids_hsearch
+```
+
+En regardant les centroïdes et les graphiques, je peux voir que :
+
+Cluster #1 -> le même dans les deux
+
+CLustre #2 en HRecherche = Cluster #5 en kmeans
+
+Cluster #3 -> le même dans les deux
+
+Cluster #4 en Hsearch = Cluster #2 en kmeans
+
+Cluster #5 en Hsearch = Cluster #4 en kmeans
+
+
+Les valeurs des centroïdes sont très similaires pour les deux algorithmes. Ils sont presque identiques pour les clusters #4 et #5 de la recherche hiérarchique (et leurs équivalents de kmeans). Cela me dit que ces clusters contiendront les mêmes individus pour les deux algorithmes. Par conséquent, je m'attends à trouver des individus placés dans différents clusters pour les clusters #1, #2 et #3. Ensuite, je peux regarder les individus qui ne sont pas mis dans les mêmes clusters. 
+
+```{r}
+clusters <- df_hsearch$data.clust
+
+countries_clustered <- df_hsearch$data.clust %>%
+  rownames_to_column("Pays") #%>%
+
+countries <- countries_clustered %>%
+  select(Pays, clust) %>%
+  rename(cluster_hs = clust)
+
+km_clust <- as.data.frame(df_clust$cluster)
+km_clust <- km_clust %>%
+  rownames_to_column("Pays")
+
+
+countries$cluster_km = km_clust$`df_clust$cluster`[match(km_clust$Pays, countries$Pays)]
+
+#Cluster # 1 -> the same in both
+#CLuster # 2 in HSearch = Cluster # 5 in kmeans
+#Cluster # 3 -> the same in both
+#Cluster # 4 in Hsearch = Cluster # 2 in kmeans
+#Cluster # 5 in Hsearch = Cluster # 4 in kmeans
+
+table(countries$cluster_hs, countries$cluster_km)
+```
+
+Que me disent ces résultats ? Il y a six individus qui sont placés dans des groupes différents par les deux algorithmes.
+
+```{r}
+countries %>%
+  group_by(cluster_hs) %>%
+  summarize(n())
+```
+
+```{r}
+countries %>%
+  group_by(cluster_km) %>%
+  summarize(n())
+```
+
+
+
+```{r}
+clust2 <- countries %>%
+  filter(cluster_hs == 2) %>%
+  mutate(diff = cluster_km != 5)
+
+clust2 %>%
+  filter(diff == TRUE)
+```
+La Namibie, la Sierra Leone et le Tadjikistan sont classés dans le cluster 2 par Hsearch (equivalent du cluster 5 en kmeans) et dans le cluster 1 par kmeans.
+
+```{r}
+clust3  <- countries %>%
+  filter(cluster_hs == 3) %>%
+  mutate(diff = cluster_km != 3)
+
+clust3 %>%
+  filter(diff == TRUE)
+```
+La Bolivie, l'Equateur et le Liban sont placés dans le cluster 3 par recherche hiérarchique et dans le cluster 5 par kmeans.
+
+Mais comment chaque cluster est-il caractérisé ? Je peux consulter les résultats de la recherche hiérarchique.
+
+```{r}
+df_hsearch$desc.var$quanti$`1`
+```
+
+Le cluster #1 (le même en kmeans) est caractérisé par une différence de population supérieure à la moyenne (à la fois globale et urbaine) (M = 9 dans le cluster et M = 3,92 dans la base de données) et un très petit PIB (M = 2066 comparé à M = 14790) et des protéines inférieures à la moyenne (M = 62 comparé à M = 81), des calories (M = 2416 dans le groupe comparé à M = 2867 pour la base de données) et des protéines_animales (M = 23 comparé à M = 42).
+
+```{r}
+df_hsearch$desc.var$quanti$`2`
+```
+
+
+Le cluster #2 (équivalent à #5 en kmeans) est caractérisé par une différence de population supérieure à la moyenne (mais plus petite que dans le cluster 1) et un PIB inférieur à la moyenne (mais plus élevé que dans le cluster 1) et des protéines similaires, des calories comme dans le cluster 1 mais animal_proteins_prop légèrement plus élevé, mais toujours inférieur à la moyenne (M = 32 par rapport à M = 23 dans le cluster #1).
+
+```{r}
+df_hsearch$desc.var$quanti$`3`
+```
+
+Le cluster #3 (le même en kmeans) se caractérise uniquement par le PIB, qui est inférieur à la moyenne (mais toujours beaucoup plus élevé que ceux des clusters #1 et #2).
+
+```{r}
+df_hsearch$desc.var$quanti$`4`
+```
+
+Le cluster #4 (#2 en kmeans) est caractérisé par toutes les variables, à l'exception du PIB. Il a des protéines supérieures à la moyenne (M = 95 comparé à M = 81), des calories (M = 3173 comparé à M = 2867) et animal_proteins_prop (M = 54 comparé à M = 42). Cependant, il présente une différence de population urbaine inférieure à la moyenne (M = 0.83 par rapport à M = 5.94).
+
+```{r}
+df_hsearch$desc.var$quanti$`5`
+```
+Et enfin, le Cluster #5 (#4 en kmeans) se caractérise par un PIB extrêmement élevé (M = 58196 comparé à M = 14790), une disponibilité protéique très élevée (M = 111 comparé à M = 81), une disponibilité calorique très élevée (M = 3460 par rapport à M = 2867) et animal_proteins_prop élevé (M = 61 par rapport à M = 42). D'autre part, il se caractérise par une différence de population urbaine inférieure à la moyenne (M = 3 contre M = 5,94).
+
+La Namibie, la Sierra Leone et le Tadjikistan sont placés dans le cluster 2 par Hsearch et dans le cluster 1 par kmeans (au lieu du cluster 5). Les clusters #1 et #2 sont quelque peu similaires dans leurs caractéristiques. Par conséquent, la Namibie, la Sierra Leone et le Tadjikistan devraient être proches de la limite de séparation entre les deux groupes.
+
+```{r}
+as.data.frame(df_ind$coord) %>%
+  rownames_to_column("Pays") %>%
+  filter(Pays %in% c("Namibie", "Sierra Leone", "Tadjikistan"))
+```
+
+```{r warning=FALSE}
+fviz_cluster(df_clust,
+             df_ind$coord,
+             repel = TRUE,            # Avoid label overlapping
+             show.clust.cent = TRUE, # Show cluster centers
+             palette = "jco",         # Color palette see ?ggpubr::ggpar
+             ggtheme = theme_minimal(),
+             main = "Carte factorielle - Kmeans")
+```
+
+
+Quels sont les pays qui caractérisent le mieux chaque cluster ?
+
+```{r}
+df_hsearch$desc.ind$para
+```
+
+
+```{r}
+countries_clust1 <- df_hsearch$desc.ind$para$`1`
+countries_clust2 <- df_hsearch$desc.ind$para$`2`
+countries_clust3 <- df_hsearch$desc.ind$para$`3`
+countries_clust4 <- df_hsearch$desc.ind$para$`4`
+countries_clust5 <- df_hsearch$desc.ind$para$`5`
+
+targeted_countries <- c(names(countries_clust3), names(countries_clust4), names(countries_clust5))
+```
+
+Pour le cluster 1, c'est `r names(countries_clust1)`
+
+Pour le cluster 2, c'est `r names(countries_clust2)` 
+
+Pour le cluster 3, c'est `r names(countries_clust3)`
+
+Pour le cluster 4, c'est `r names(countries_clust4)`
+
+Pour le cluster 5, c'est `r names(countries_clust5)`
+
+
+
+### Courte liste des pays à cibler. 
+
+Compte tenu de leurs caractéristiques, il devrait s'agir principalement de pays des groupes 3, 4 et 5.
+
+Il y a un total de 108 pays dans ces 3 clusters. Je sélectionnerai les pays les plus représentatifs pour chaque cluster (les 5 pays qui ont la distance la plus courte entre le centroïde et eux-mêmes).
+
+Quelles sont les caractéristiques de ces pays ?
+
+```{r}
+countries_clustered %>%
+  filter(Pays %in% targeted_countries) %>%
+  arrange(clust)
+```
+
+
+### Sauvegarde des centres de cluster et des clusters pour chaque individu
+
+Je vais utiliser les résultats de la recherche hiérarchique.
+
+```{r}
+
+clusters <- df_hsearch$data.clust
+
+countries_clustered <- df_hsearch$data.clust %>%
+  rownames_to_column("Pays") #%>%
+
+countries <- countries_clustered %>%
+  select(Pays, clust)
+
+countries %>%
+  group_by(clust) %>%
+  summarize(n())
+
+centroids <- centroids_hsearch %>%
+  select(clust, dim1, dim2)
+
+write_csv(centroids, "P5_04_centroids.csv")
+write_csv(countries, "P5_05_pays.csv")
+
+```
+
+Maintenant, je vais effectuer les tests suggérés. 
+
+1. Un test d'adéquation : parmi d'autres variables que vous trouverez pertinentes, trouvez une variable dont la loi est normale: 
+
+```{r}
+# Find the normally distributed variables:
+shapiro.test(df$pop_diff) # 0.14
+shapiro.test(df$pop_urban_diff) # 0.0002
+shapiro.test(df$animal_proteins_prop) # 2.27e-05
+shapiro.test(df$proteins) # 0.019
+shapiro.test(df$calories) # 0.06
+shapiro.test(df$PIB) # < 2.2e-16
+
+```
+Les variables qui sont normalement distribuées sont: pop_diff et calories
+
+2. Un test de comparaison de deux populations (dans le cas gaussien) : choisissez 2 clusters parmi ceux que vous aurez déterminé. Sur ces 2 clusters, testez la variable gaussienne grâce à un test de comparaison (t.test et var.test).
+
+```{r}
+
+cluster_selection <- c(2, 5)
+
+selected_clusters <- clusters %>%
+  filter(clust %in% cluster_selection)
+
+cluster1 <- clusters %>%
+  filter(clust == cluster_selection[1])
+cluster2 <- clusters %>%
+  filter(clust == cluster_selection[2])
+
+# Pop diff:
+t.test(cluster1$pop_diff, cluster2$pop_diff)
+var.test(cluster1$pop_diff, cluster2$pop_diff)
+
+# Calories:
+t.test(cluster1$calories, cluster2$calories)
+var.test(cluster1$calories, cluster2$calories)
+```
+
+Il existe des différences significatives dans les moyennes des deux groupes, mais il existe une différence significative dans la variance uniquement pour le nombre de calories.
+
+
+### Nombre de clusters: 3
+
+Que se passe-t-il lorsque je sélectionne le nombre optimal de clusters?
+
+```{r warning=FALSE}
+df_hsearch1 <- HCPC(df_pca, nb.clust = 3, graph = FALSE) 
+
+# Visualisation de dendrogramme
+fviz_dend(df_hsearch1, 
+          cex = 0.7,                     # Label size
+          palette = "jco",               # Color palette see ?ggpubr::ggpar
+          rect = TRUE, rect_fill = TRUE, # Add rectangle around groups
+          rect_border = "jco",           # Rectangle color
+          labels_track_height = 0.8      # Augment the room for labels
+          )
+```
+
+En regardant le dendrogramme, je peux voir qu'il y a un groupe qui est plus petit que les autres. Mais j'ai besoin de voir quel est le nombre réel d'individus dans chaque groupe.
+
+```{r warning=FALSE}
+fviz_cluster(df_hsearch1,
+             repel = TRUE,            # Avoid label overlapping
+             show.clust.cent = TRUE, # Show cluster centers
+             palette = "jco",         # Color palette see ?ggpubr::ggpar
+             ggtheme = theme_minimal(),
+             main = "Carte factorielle - recherche hiérarchique - 3 clusters")
+
+fviz_cluster(df_hsearch,
+             repel = TRUE,            # Avoid label overlapping
+             show.clust.cent = TRUE, # Show cluster centers
+             palette = "jco",         # Color palette see ?ggpubr::ggpar
+             ggtheme = theme_minimal(),
+             main = "Carte factorielle - recherche hiérarchique - 5 clusters")
+
+clusters1 <- df_hsearch1$data.clust
+clusters1 %>%
+  group_by(clust) %>%
+  summarize(n())
+```
+Le cluster #3 a le moins d'individus. 
+
+Mais comment chaque cluster est-il caractérisé ?
+
+```{r}
+df_hsearch1$desc.var$quanti$`1`
+```
+
+Le cluster #1 se caractérise par une différence de population supérieure à la moyenne, un PIB vraiment faible, une faible disponibilité alimentaire et une faible proportion de protéines animales.
+
+
+```{r}
+df_hsearch1$desc.var$quanti$`2`
+```
+
+Le cluster #2 se caractérise par une proportion de protéines animales légèrement supérieure à la moyenne, en dessous du PIB moyen (mais supérieur au groupe #1) et une petite différence de population.
+
+```{r}
+df_hsearch1$desc.var$quanti$`3`
+```
+
+Le cluster #3 se caractérise par un PIB très élevé, une grande disponibilité alimentaire et une proportion élevée de protéines animales et une différence de population inférieure à la moyenne.
+
+```{r}
+countries_clustered1 <- df_hsearch1$data.clust %>%
+  rownames_to_column("Pays") %>%
+  mutate(clust5 = countries_clustered$clust[match(Pays, countries_clustered$Pays)])
+
+countries_clustered1 <- countries_clustered1 %>%
+  mutate(bla = as.character(clust) == as.character(clust5))
+
+table(countries_clustered1$clust, countries_clustered1$clust5)
+```
+Sur les 59 individus placés dans le cluster 1 (lorsque 3 clusters sont utilisés), 31 appartenaient au cluster #1 et 28 au cluster #2 lorsque 5 clusters ont été utilisés.
+
+Dans le cluster #2, il y a 77 individus qui sont 5 du cluster #2, 45 du cluster #3 et 27 du cluster #4.
+
+Dans le cluster #3, il y a 36 individus, 12 du cluster #4 et 24 du cluster #5.
+
+Dans cette situation, les pays qui devraient être ciblés sont les pays des clusters 2 et 3.

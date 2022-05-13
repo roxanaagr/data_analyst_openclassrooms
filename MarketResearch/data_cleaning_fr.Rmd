@@ -1,0 +1,240 @@
+---
+title: "Etude de marché - préparation des données"
+author: "Roxana Agrigoroaie"
+date: "23 10 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Introduction
+
+Pour ce projet je dois réaliser une étude de marché afin de trouver les pays possibles où étendre l'entreprise spécialisée dans le poulet. L'idée est d'étudier les régimes alimentaires de plusieurs pays (en termes de protéines animales et de calories) afin de trouver le groupe de pays où se développer.
+
+Je vais devoir utiliser les données de la FAO. Certaines des variables requises sont : la différence de population entre deux années différentes (en pourcentage), la disponibilité alimentaire en protéines par personne, la disponibilité alimentaire en calories par personne et la proportion de protéines animales par rapport aux protéines totales pour chaque pays. Je peux aussi utiliser d'autres variables.
+
+Par exemple, j'ai sélectionné le PIB par personne et la différence de population urbaine.
+
+Comme mes données sont constituées de plusieurs variables (plus de 5), j'appliquerai l'ACP afin de réduire la dimensionnalité, puis j'effectuerai une analyse de cluster pour trouver les groupes de pays.
+
+Mais d'abord, je dois préparer mes données.
+
+## Préparation des données
+
+J'ai sélectionné les années 2015 et 2018 (c'est l'année la plus récente pour laquelle les données sont disponibles).
+
+Premièrement, je calculerai la différence entre la population, la population totale et la population urbaine.
+
+```{r}
+pop <- read_csv("data/en_population.csv", 
+                show_col_types = FALSE, 
+                name_repair = "universal")
+
+# Je ne garde que les colonnes qui sont nécessaires
+pop <- pop %>%
+  mutate(Unit = as.numeric(gsub("([0-9]+).*$", "\\1", Unit))) %>%
+  # Calculer le total pour chaque pays
+  mutate(Total = Unit * Value) %>%
+  select(Area.Code..FAO., Area, Element.Code, Element, Year, Total) 
+
+population <- pop %>%
+  select(Area.Code..FAO., Area) %>%
+  distinct(Area, .keep_all = TRUE)
+
+# Dans un projet précédent, j'ai remarqué que la Chine est apparue deux fois. Voyons si c'est le cas ici aussi.
+population %>%
+  filter(Area == "China")
+
+# Je dois l'eliminer de mes donnnees.
+
+population <- population %>%
+  filter(Area != "China")
+
+```
+
+
+```{r}
+compute_percentage_change <- function(datain, element_code, datafinal) {
+  
+  datain <- datain %>%
+    filter(Element.Code == element_code)
+  
+  # extraire la valeur pour 2015
+  data_2015 <- datain %>%
+    filter(Year == 2015)
+  
+  # extraire la valeur pour 2018
+  data_2018 <- datain %>%
+    filter(Year == 2018)
+  
+  datafinal$total_2018 <- data_2018$Total[match(datafinal$Area,data_2018$Area)]
+  datafinal$total_2015 <- data_2015$Total[match(datafinal$Area, data_2015$Area)]
+  
+  datafinal <- datafinal %>%
+    mutate(diff = round(((total_2018 - total_2015)/total_2015) * 100, digits = 2))
+  
+  return(datafinal$diff)
+  
+}
+
+```
+
+```{r}
+population$diff <- compute_percentage_change(pop, 511, population)
+population$diff_urban <- compute_percentage_change(pop, 561, population)
+```
+
+```{r}
+dispo <- read_csv("data/en_dispo.csv", 
+                  show_col_types = FALSE, 
+                  name_repair = "universal")
+```
+La population dans la base de données dispo a un indicateur * et une description "Chiffre non officiel". Par conséquent, j'utiliserai les informations sur la population de la base de données sur la population. Les variables qui m'intéressent sont : Apport alimentaire (kcal/habitant/jour), Quantité d'apport protéique (g/habitant/jour).
+
+De plus, j'exige également le pourcentage de protéines animales par rapport aux protéines disponibles pour chaque pays.
+
+```{r}
+animal_products <- read_csv("data/en_animals.csv", 
+                            show_col_types = FALSE, 
+                            name_repair = "universal")
+
+animals <- animal_products %>%
+  distinct(Item.Code, Item)
+
+animals <- as.list(animals)
+
+dispo <- dispo %>%
+  mutate(is_animal = if_else(Item %in% animals$Item, TRUE, FALSE) )
+
+
+# J'ai besoin de calculer l'approvisionnement alimentaire en protéines par habitant.
+# disponibilité alimentaire en protéine par habitant
+
+proteins <- dispo %>%
+  filter(Element.Code == 674) %>%
+  select(Area.Code..FAO., Area, Element.Code, Element, Item.Code, Item,
+         Unit, Value) %>%
+  group_by(Area) %>%
+  summarize(protein = sum(Value))
+
+# proportion de protéines d'origine animale par rapport à la quantité totale de protéines dans la disponibilité alimentaire du pays ;
+
+prop_protein <- dispo %>%
+  filter(Element.Code == 674) %>%
+  select(Area.Code..FAO., Area, Element.Code, Element, Item.Code, Item,
+         Unit, Value, is_animal) %>%
+  group_by(Area, is_animal) %>%
+  summarize(protein = sum(Value)) %>%
+  filter(is_animal == TRUE) %>%
+  mutate(total = proteins$protein[match(Area, proteins$Area)]) %>%
+  mutate(prop_animal_protein = round((protein * 100)/total, digits = 2))
+
+calories <- dispo %>%
+  filter(Element.Code == 664) %>%
+  select(Area.Code..FAO., Area, Element.Code, Element, Item.Code, Item,
+         Unit, Value) %>%
+  group_by(Area) %>%
+  summarize(calories = sum(Value))
+```
+
+## Création du dataframe df
+
+
+Je peux maintenant commencer à créer mon dataframe final que j'utiliserai pour l'analyse
+
+```{r}
+df <- population %>%
+  select(Area.Code..FAO., Area, diff, diff_urban) %>%
+  rename(c(pop_diff = diff, pop_urban_diff = diff_urban, Area.Code = Area.Code..FAO.))
+
+df$proteins = proteins$protein[match(df$Area, proteins$Area)]
+df$calories = calories$calories[match(df$Area, calories$Area)]
+df$animal_proteins_prop = prop_protein$prop_animal_protein[match(df$Area, prop_protein$Area)]
+
+```
+
+
+Une autre variable que j'examine est le PIB par habitant pour chaque pays. Je dois ajouter cette information au dataframe.
+
+```{r}
+gdp_info <- read_csv("data/en_gdp_per_capita.csv", 
+                     show_col_types = FALSE, 
+                     name_repair = "universal")
+
+glimpse(gdp_info)
+```
+
+Je n'ai besoin que des colonnes Valeur, qui représentent le PIB par habitant en USD pour chaque pays en 2018.
+
+```{r}
+df$GDP <- gdp_info$Value[match(df$Area, gdp_info$Area)]
+```
+
+
+```{r}
+summary(df)
+```
+
+
+Il existe certains pays pour lesquels il n'existe aucune information concernant leur alimentation. Par conséquent, je vais les supprimer de la base de données.
+
+```{r}
+df <- df %>%
+  filter_at(vars(proteins), all_vars(!is.na(.)))
+
+glimpse(df)
+```
+
+
+Pour l'ACP, je dois m'assurer que je n'ai pas de données manquantes.
+
+```{r}
+summary(df)
+```
+
+Il y a juste un autre pays pour lequel je n'ai pas les informations concernant leur PIB.
+
+```{r}
+df %>%
+  filter(is.na(GDP))
+```
+
+Il me manque une information, le PIB de Taïwan. Je pourrais trouver ces informations à un autre endroit, ou je peux supprimer les données. Dans ce cas, je le supprime de mon dataframe.
+
+
+```{r}
+df <- df %>%
+  filter(!is.na(GDP))
+
+summary(df)
+```
+
+La base de données finale contient 6 variables sur 172 pays.
+
+Ensuite, je peux passer à la partie analyse.
+
+Mais d'abord, j'enregistre la base de données résultante afin que je n'aie pas besoin de passer par les étapes précédentes.
+
+Aussi, je crée une version française du dataframe nettoyé (avec le nom des pays en français).
+
+```{r}
+fr_pop <- read_csv("data/fr_population.csv", 
+                   show_col_types = FALSE, 
+                   name_repair = "universal") %>%
+  rename(Area.Code = Code.zone..FAO.) %>%
+  distinct(Area.Code, .keep_all = TRUE)
+
+df_fr <- df %>%
+  mutate(pays = fr_pop$Zone[match(Area.Code, fr_pop$Area.Code)]) %>%
+  select(-Area, -Area.Code)
+
+df <- df %>%
+  select(-Area.Code)
+
+# write_csv(df, "data/en_clean_data.csv")
+write_csv(df_fr, "data/fr_clean_data.csv")
+```
+
