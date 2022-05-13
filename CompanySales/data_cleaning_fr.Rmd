@@ -1,0 +1,390 @@
+---
+title: "Nettoyage des données"
+author: "Roxana Agrigoroaie"
+date: "08 09 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+
+customers <- read_csv('data/customers.csv', show_col_types = FALSE)
+products  <- read_csv('data/products.csv', show_col_types = FALSE)
+transactions <- read_csv('data/transactions.csv', show_col_types = FALSE)
+
+```
+
+## Aperçu des données
+
+Les données se composent de trois fichiers : customers, products.csv et transactions.csv.
+
+Pour le processus de nettoyage, je vais suivre la liste de contrôle suivante:
+
+- Vérifier les erreurs structurelles
+- Vérifier les irrégularités des données
+- Valeurs manquantes
+- Tidy data
+
+Et à la fin, je créerai une seule base de données avec toutes les variables importantes nécessaires à la partie analyse.
+
+Je vais documenter toutes les étapes de nettoyage.
+
+## Erreurs structurelles
+
+Il s'agit de variables mal étiquetées, de types de données défectueux, de numéros d'identification non uniques et d'incohérences de chaîne
+
+### Customers.csv
+
+Customers.csv contient les informations sur les clients. Voyons sa structure
+
+```{r}
+glimpse(customers)
+```
+
+Il y a des lignes `r nrow(customers)` et des colonnes `r ncol(customers)`. Les variables sont : client_id, sex et birth, qui sont des noms appropriés pour un customers df.
+
+La colonne client_id est de type caractère, ce qui convient dans ce cas étant donné qu'elle est constituée de la lettre c puis d'un numéro associé à chaque client.
+
+Un premier problème que je peux voir est lié à la variable sexe. Il est de type char au lieu d'être un facteur. Solution : convertissez-le en facteur.
+
+```{r}
+customers$sex <- as.factor(customers$sex)
+glimpse(customers)
+
+n_distinct(customers$birth)
+```
+
+Il y a un total de `r n_distinct(customers$birth)` années de naissance distinctes pour les clients. Je peux laisser la colonne naissance aussi double car je ne suis pas encore sûr du type d'analyse que je vais effectuer à l'aide de cette variable.
+
+Avant de passer au fichier products, je dois vérifier s'il y a des entrées en double dans le dataframe.
+
+```{r}
+customers %>%
+  filter(duplicated(client_id))
+```
+Comme il n'y a rien renvoyé, il n'y a pas d'entrées en double dans la trame de données. Un autre aspect que je peux vérifier est si tous les clients_id ont le même format: c_#
+
+```{r}
+customers %>%
+  mutate(first_letter = substring(client_id, 1, 1)) %>%
+  distinct(first_letter)
+```
+Il n'y a qu'un seul résultat, la lettre c.
+
+### Products.csv
+
+Ensuite, je vais vérifier le fichier des produits
+
+```{r}
+glimpse(products)
+
+```
+Il y a des lignes `r nrow(products)` et des colonnes `r ncol(products)`. Les variables sont : id_prod, price et categ. Il n'y a pas de variables mal étiquetées. Comme pour les clients c'est client_id et pour les produits c'est id_prod, je pourrais renommer la colonne id_prod pour qu'elle ait la même structure que pour les clients.
+
+```{r}
+products <- products %>%
+  rename(product_id = id_prod)
+glimpse(products)
+```
+
+
+Chaque produit a une catégorie associée, qui se trouve à la fois dans l'identifiant et dans une colonne distincte. Tout d'abord, je dois m'assurer que la catégorie dans l'id est la même que la colonne categ, puis convertir la colonne categ en facteur.
+
+
+```{r}
+products <- products %>%
+  mutate(new_categ = substring(product_id, 1, 1)) %>% 
+  # vérifie si ce sont les mêmes
+  mutate(correct = categ == new_categ)
+
+sum(products$correct)
+
+products %>%
+  filter(correct == FALSE)
+```
+
+L'observation est d'un produit test qui a aussi un prix négatif et l'id est égal à T_0. Je peux supprimer cette observation du df. Au cours de cette étape, je vais également supprimer les colonnes correctes et new_categ et convertir categ en facteur.
+
+```{r}
+
+products <- products %>%
+  filter(correct) %>%
+  select(product_id, price, categ) %>%
+  mutate(categ = as.factor(categ))
+
+glimpse(products)
+```
+
+Ensuite, je vérifierai s'il y a des produits en double.
+
+```{r}
+products %>%
+  filter(duplicated(product_id))
+```
+
+Il n'y a pas de product_id en double.
+
+### Transactions
+
+Enfin, je vérifierai les erreurs structurelles pour les transactions df.
+
+```{r}
+glimpse(transactions)
+```
+
+There are a total of `r nrow(transactions)` rows and `r ncol(transactions)` columns. The variables are: id_prod, date, session_id and client_id. 
+
+First, as I renamed the id_prod column in the products df I should do the same in the transactions df as well. 
+
+
+```{r}
+transactions <- transactions %>%
+  rename(product_id = id_prod)
+
+glimpse(transactions)
+```
+
+La variable date est de type chr au lieu d'être de type date. Je vais utiliser la package lubridate pour travailler avec les types de date.
+
+```{r}
+transactions <- transactions %>%
+  mutate(date = as_datetime(date, tz = 'UTC'))
+```
+
+J'ai reçu un avertissement indiquant que 200 observations n'avaient pas été analysées. Je dois enquêter sur pourquoi cela s'est produit. 
+
+```{r}
+transactions %>%
+  filter(is.na(date))
+```
+
+Je peux voir que cela s'est produit pour les entrées qui ont le product_id T_0, qui est également le produit de test que j'avais dans les produits df. Toutes ces entrées doivent être supprimées.
+
+```{r}
+transactions <- transactions %>%
+  filter(!is.na(date))
+
+glimpse(transactions)
+```
+
+Ensuite, comme il n'y a qu'un seul produit par ligne, je peux supposer que l'identifiant de session n'est pas unique. Mais je dois m'en assurer. Par exemple, je pourrais utiliser group_by l'identifiant de session et voir combien d'entrées il y a pour chacun.
+
+```{r}
+transactions %>%
+  group_by(session_id) %>%
+  summarise(products = n_distinct(product_id))
+```
+
+En effet, ma supposition était vraie. Il y a plus de produits par session, mais chaque produit est sur une ligne distincte.
+
+Structurellement parlant, les données sont propres.
+
+
+## Irrégularités de données
+
+Ensuite, je passe à l'étape suivante, Vérification des irrégularités dans les données. Celles-ci concernent des problèmes de précision, plus particulièrement des valeurs invalides (valeurs qui n'ont pas de sens logique, par exemple, un prix de produit négatif) et des valeurs aberrantes.
+
+### Customers
+
+Vérifions à nouveau les clients df.
+
+```{r}
+glimpse(customers)
+```
+
+Pour ce df, la seule colonne où des valeurs invalides pourraient se trouver est la colonne birth. Le sexe a déjà été converti en facteur et pour client_id, je sais qu'il a le même format.
+
+```{r}
+table(customers$birth)
+
+customers %>%
+  filter(birth < 1940)
+```
+
+Je vois qu'il y a des clients nés avant 1940. J'ai vu dans les transactions df que certaines commandes ont été passées en 2021, donnant à ces clients un âge de plus de 80 ans. Il est très peu probable que des personnes de plus de 80 ans commandent en ligne. Il y a 121 clients qui ont plus de 80 ans. Les supprimer signifierait une perte de données importantes. Par conséquent, je vais créer une nouvelle colonne nommée client_unlikely qui sera TRUE pour tous les âges improbables.
+
+```{r}
+customers <- customers %>%
+  mutate(client_unlikely = birth < 1940)
+```
+
+
+
+### Products
+
+Regardons à nouveau la structure des products df.
+
+```{r}
+glimpse(products)
+```
+
+La seule donnée invalide serait un prix négatif.
+
+```{r}
+products %>%
+  filter(price < 0)
+
+```
+Ce qui n'est pas le cas pour ce df. Je peux vérifier quel est le prix le plus bas et le plus élevé.
+
+```{r}
+products %>%
+  summarise(min(price), max(price))
+```
+### Transactions
+
+Enfin, je regarderai les transactions df.
+
+```{r}
+glimpse(transactions)
+```
+
+Je peux regarder les dates.
+
+```{r}
+transactions %>%
+  summarize(min(date), max(date))
+```
+
+
+Les transactions ont été effectuées entre le 1er mars 2021 et le 28 février 2022.
+
+## Valeurs manquantes
+
+Ensuite, je vérifie s'il y a des valeurs manquantes dans notre dfs.
+
+### Customers
+
+```{r}
+glimpse(customers)
+```
+
+```{r}
+customers %>%
+  filter(is.na(client_id))
+
+customers %>%
+  filter(is.na(sex))
+
+customers %>%
+  filter(is.na(birth))
+```
+
+### Products
+
+Ensuite, pour les produits
+
+```{r}
+glimpse(products)
+```
+
+```{r}
+products %>%
+  filter(is.na(product_id))
+
+products %>%
+  filter(is.na(price))
+
+products %>%
+  filter(is.na(categ))
+```
+
+### Transactions
+
+Enfin, pour les transactions.
+
+```{r}
+glimpse(transactions)
+```
+
+```{r}
+transactions %>%
+  filter(is.na(product_id))
+
+transactions %>%
+  filter(is.na(date))
+
+transactions %>%
+  filter(is.na(session_id))
+
+transactions %>%
+  filter(is.na(client_id))
+```
+
+## Tidy data
+
+Une tidy data doit avoir chaque variable dans une colonne, chaque observation dans une ligne.
+
+Par conséquent, je devrais concaténer les trois dfs pour n'en avoir qu'un seul contenant toutes les données.
+
+```{r}
+df <- transactions %>%
+  select(c('session_id', 'date', 'product_id', 'client_id')) %>%
+  mutate(product_price = products$price[match(product_id, products$product_id)]) %>%
+  mutate(product_categ = products$categ[match(product_id, products$product_id)]) %>%
+  mutate(client_gender = customers$sex[match(client_id, customers$client_id)]) %>%
+  mutate(client_birth = customers$birth[match(client_id, customers$client_id)]) %>%
+  mutate(client_unlikely = customers$client_unlikely[match(client_id, customers$client_id)])
+```
+
+Comme les données de trois dfs distincts ont été sélectionnées, je dois m'assurer qu'il n'y a toujours pas de données manquantes ou de valeurs invalides. 
+
+```{r}
+glimpse(df)
+```
+```{r}
+df %>%
+  filter(is.na(product_price))
+```
+
+
+Il y a 103 entrées pour lesquelles il n'y a pas de prix de produit ou de catégorie de produit. L'identifiant du produit est 0_2245. Je devrais vérifier si ce produit existe dans les produits df.
+
+```{r}
+products %>%
+  filter(product_id == '0_2245')
+```
+
+Il n'y a pas d'entrée pour ce produit dans le products df. Je peux conclure qu'il s'agissait de transactions de test et je peux les supprimer du df.
+
+```{r}
+df <- df %>%
+  filter(product_id != '0_2245')
+
+df %>%
+  filter(is.na(product_price))
+```
+
+Ensuite, je vérifie la catégorie de produit
+
+```{r}
+df %>%
+  filter(is.na(product_categ))
+```
+Et ensuite pour les clients:
+
+```{r}
+df %>%
+  filter(is.na(client_birth))
+
+df %>%
+  filter(is.na(client_gender))
+```
+Il n'y a pas de valeurs manquantes dans le df, il n'y a plus d'erreurs structurelles ou d'irrégularités de données. Par conséquent, je peux passer à la phase suivante, qui est la phase d'analyse.
+
+Mais d'abord, j'enregistre le df en tant que fichier csv et en tant que fichier RData. Je dois garder à l'esprit que lors de l'enregistrement en tant que fichier .csv, lorsque je l'importe pour l'analyse, les facteurs sont convertis en caractères. Je vais d'abord devoir vérifier que toutes les variables ont les bons types de données.
+
+```{r}
+write_csv(df, 'data/clean_data.csv')
+save(df, file = 'data/clean_data.RData')
+```
+
+
+
+
+
+
+
+
